@@ -1,6 +1,6 @@
 module github.com/ngthdong/minimal-layer1-blockchain/tests
 
-go 1.24
+go 1.26.4
 
 require github.com/ngthdong/minimal-layer1-blockchain v0.0.0
 
