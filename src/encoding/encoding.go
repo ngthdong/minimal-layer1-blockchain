@@ -43,8 +43,8 @@ func (w *Writer) Bytes(b []byte) *Writer {
 	return w
 }
 
-func (w *Writer) String(s string) *Writer { 
-	return w.Bytes([]byte(s)) 
+func (w *Writer) String(s string) *Writer {
+	return w.Bytes([]byte(s))
 }
 
 func (w *Writer) Fixed(b []byte) *Writer {
@@ -52,11 +52,11 @@ func (w *Writer) Fixed(b []byte) *Writer {
 	return w
 }
 
-func (w* Writer) Len() int {
+func (w *Writer) Len() int {
 	return len(w.buf)
 }
 
-func (w* Writer) Out() []byte {
+func (w *Writer) Out() []byte {
 	out := make([]byte, len(w.buf))
 	copy(out, w.buf)
 	return out
