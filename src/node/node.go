@@ -19,6 +19,7 @@ type Node struct {
 	reg     state.Registry
 	net     *network.Network
 	log     *logging.Logger
+	clock   network.Clock
 
 	State   *state.State
 	Ledger  *ledger.Ledger
@@ -28,9 +29,10 @@ type Node struct {
 	seen map[types.Hash]struct{} // message IDs already handled (gossip dedup)
 }
 
-func New(id types.NodeID, chainID string, reg state.Registry, net *network.Network, log *logging.Logger) *Node {
+func New(id types.NodeID, chainID string, reg state.Registry, net *network.Network,
+	log *logging.Logger, clock network.Clock) *Node {
 	return &Node{
-		ID: id, chainID: chainID, reg: reg, net: net, log: log,
+		ID: id, chainID: chainID, reg: reg, net: net, log: log, clock: clock,
 		State: state.New(), Ledger: ledger.New(), Mempool: mempool.New(),
 		seen: make(map[types.Hash]struct{}),
 	}

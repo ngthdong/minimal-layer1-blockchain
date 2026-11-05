@@ -28,6 +28,16 @@ type fakeEnv struct {
 
 	commits   []types.CommitCert // what Commit received
 	commitErr error              // if set, Commit refuses
+	timers    []scheduled        // what ScheduleTimeout received
+}
+
+type scheduled struct {
+	after uint64
+	t     consensus.Timeout
+}
+
+func (f *fakeEnv) ScheduleTimeout(after uint64, t consensus.Timeout) {
+	f.timers = append(f.timers, scheduled{after, t})
 }
 
 func newFakeEnv() *fakeEnv { return &fakeEnv{st: state.New()} }
@@ -79,11 +89,15 @@ func (f *fakeEnv) logged(prefix string) bool {
 	return false
 }
 
+var testConsensusConfig = consensus.Config{
+	TimeoutProposeMs: 1000, TimeoutPrevoteMs: 500, TimeoutPrecommitMs: 500, TimeoutDeltaMs: 300, MaxBlockTxs: 10,
+}
+
 func newEngine(t *testing.T, id types.NodeID) (*consensus.Engine, *fakeEnv) {
 	t.Helper()
 	env := newFakeEnv()
 	signer := consensus.NewVoteSigner(id, vPrivs[id], chain)
-	return consensus.NewEngine(id, chain, vset(t), signer, consensus.Config{MaxBlockTxs: 10}, env), env
+	return consensus.NewEngine(id, chain, vset(t), signer, testConsensusConfig, env), env
 }
 
 func TestStartHeightResetsAndEntersRoundZero(t *testing.T) {

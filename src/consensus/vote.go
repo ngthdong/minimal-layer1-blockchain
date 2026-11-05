@@ -46,6 +46,7 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 func (e *Engine) progress() {
 	e.tryPrevote()
 	e.checkPrevoteQuorum()
+	e.checkTimers()
 	e.checkCommit() // last: it may start the next height
 }
 
@@ -54,7 +55,7 @@ func (e *Engine) progress() {
 // With a proposal for the current round:
 //   - body executed correctly → prevote B, unless locked on another block;
 //   - body provably invalid   → prevote NIL;
-//   - body not known yet      → wait.
+//   - body not known yet      → wait (the propose timeout prevotes NIL).
 //
 // Proposals that carry a POL round.
 func (e *Engine) tryPrevote() {
@@ -91,7 +92,7 @@ func (e *Engine) checkPrevoteQuorum() {
 	bh, ok := e.Votes.Majority(key, e.vals.Quorum())
 	switch {
 	case !ok:
-		return // no quorum yet
+		return // no quorum yet (the prevote timeout precommits NIL)
 	case bh.IsZero():
 		if e.castVote(types.Precommit, types.ZeroHash) {
 			e.Step = StepPrecommit

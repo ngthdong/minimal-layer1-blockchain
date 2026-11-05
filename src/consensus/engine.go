@@ -46,6 +46,8 @@ type Env interface {
 	// Commit finalizes block: appends it with its certificate to the ledger,
 	// installs post as the node's state and cleans the mempool.
 	Commit(block types.Block, cert types.CommitCert, post *state.State) error
+	// ScheduleTimeout calls engine.OnTimeout(t) after afterMs of virtual time.
+	ScheduleTimeout(afterMs uint64, t Timeout)
 }
 
 // pending is a block of the current height whose body was checked.
@@ -82,6 +84,7 @@ type Engine struct {
 	invalid   map[types.Hash]bool              // blocks whose body is provably wrong
 
 	future map[uint64][]buffered // messages for the next height (buffer.go)
+	timers map[Timeout]bool      // timers already scheduled in this height
 }
 
 func NewEngine(id types.NodeID, chainID string, vals *ValidatorSet, signer *VoteSigner, cfg Config, env Env) *Engine {
@@ -100,17 +103,20 @@ func (e *Engine) StartHeight(h uint64) {
 	e.headers = make(map[types.Hash]types.BlockHeader)
 	e.bodies = make(map[types.Hash]*pending)
 	e.invalid = make(map[types.Hash]bool)
+	e.timers = make(map[Timeout]bool)
 	e.signer.Prune(h)
 	e.enterNewRound(0)
 	e.replay() // proposal and votes of h that arrived while we were still at h-1
 }
 
 // enterNewRound moves to round r of the current height; the proposer of the
-// round builds and announces a block.
+// round builds and announces a block. Locks are KEPT: they only end with the
+// height. The propose timer starts now.
 func (e *Engine) enterNewRound(r int32) {
 	e.Round, e.Step = r, StepPropose
 	proposer := e.vals.Proposer(e.Height, r)
 	e.env.Log(logging.EvNewRound, e.Height, r, "proposer", node(proposer))
+	e.schedule(StepPropose, e.cfg.TimeoutProposeMs)
 	if proposer == e.ID {
 		e.propose()
 	}

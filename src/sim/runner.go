@@ -63,7 +63,7 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 	mesh := network.FullMesh(cfg.NumValidators)
 	for i := 0; i < cfg.NumValidators; i++ {
 		id := types.NodeID(i)
-		nd := node.New(id, cfg.ChainID, reg, net, log)
+		nd := node.New(id, cfg.ChainID, reg, net, log, sched)
 		signer := consensus.NewVoteSigner(id, privs[i], cfg.ChainID)
 		nd.Engine = consensus.NewEngine(id, cfg.ChainID, vals, signer, ccfg, nd)
 		net.Register(id, nd.HandleMessage)

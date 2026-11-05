@@ -51,3 +51,8 @@ func (n *Node) Commit(block types.Block, cert types.CommitCert, post *state.Stat
 	n.Mempool.RemoveCommitted(block.Txs, n.State.Nonce)
 	return nil
 }
+
+// ScheduleTimeout fires the engine timer t after afterMs of virtual time.
+func (n *Node) ScheduleTimeout(afterMs uint64, t consensus.Timeout) {
+	n.clock.At(n.clock.Now()+afterMs, func() { n.Engine.OnTimeout(t) })
+}

@@ -29,7 +29,7 @@ func nodeNet(n int, dup float64) (*sim.Scheduler, []*node.Node, func() string) {
 	nodes := make([]*node.Node, n)
 	for i := 0; i < n; i++ {
 		id := types.NodeID(i)
-		nodes[i] = node.New(id, chain, registry(), net, log)
+		nodes[i] = node.New(id, chain, registry(), net, log, sched)
 		net.Register(id, nodes[i].HandleMessage)
 		net.SetPeers(id, mesh[id])
 	}
