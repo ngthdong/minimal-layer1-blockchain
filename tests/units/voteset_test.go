@@ -35,8 +35,8 @@ func TestDuplicateVotesCountOnce(t *testing.T) {
 	}
 }
 
-// A second, different vote by the same validator is flagged, not counted,
-// and the first vote is returned as evidence.
+// T7: a second, different vote by the same validator is flagged, the first
+// one is returned as evidence, and each vote counts toward its own block.
 func TestEquivocationDetected(t *testing.T) {
 	vs := consensus.NewVoteSet()
 	vs.Add(voteFor(3, types.Prevote, 0, blockA))
@@ -44,11 +44,41 @@ func TestEquivocationDetected(t *testing.T) {
 	if r != consensus.Equivocation || first.BlockHash != blockA {
 		t.Fatalf("result = %v, kept = %x", r, first.BlockHash[:1])
 	}
-	if vs.Count(prevote, blockA) != 1 || vs.Count(prevote, blockB) != 0 {
-		t.Fatal("equivocating vote must not be counted")
+	if r, _ := vs.Add(voteFor(3, types.Prevote, 0, blockB)); r != consensus.Duplicate {
+		t.Fatalf("the same second vote again = %v, want duplicate", r)
+	}
+	if vs.Count(prevote, blockA) != 1 || vs.Count(prevote, blockB) != 1 || vs.CountAny(prevote) != 1 {
+		t.Fatal("want one count for A, one for B, one validator")
 	}
 	if !reflect.DeepEqual(vs.Equivocators(prevote), []types.NodeID{3}) {
 		t.Fatalf("equivocators = %v", vs.Equivocators(prevote))
+	}
+}
+
+// The case that stalled T7: honest 0..5 vote A; equivocator 6 sent A to some
+// nodes and NIL to others. Whichever copy arrived first, every node counts
+// 7 for A — a quorum, and a certificate with 7 distinct validators.
+func TestEquivocatorCountsOncePerTally(t *testing.T) {
+	for _, order := range [][]types.Hash{{blockA, types.ZeroHash}, {types.ZeroHash, blockA}} {
+		vs := consensus.NewVoteSet()
+		for id := types.NodeID(0); id < 6; id++ {
+			vs.Add(voteFor(id, types.Prevote, 0, blockA))
+		}
+		vs.Add(voteFor(6, types.Prevote, 0, order[0]))
+		vs.Add(voteFor(6, types.Prevote, 0, order[1]))
+		if h, ok := vs.Majority(prevote, 7); !ok || h != blockA || len(vs.VotesFor(prevote, blockA)) != 7 {
+			t.Fatalf("order %x: no quorum for A", order[0][:1])
+		}
+		if vs.Count(prevote, types.ZeroHash) != 1 {
+			t.Fatal("the NIL vote counts once for NIL")
+		}
+	}
+	vs := consensus.NewVoteSet()
+	for i := 0; i < 10; i++ { // one validator, ten different blocks
+		vs.Add(voteFor(9, types.Prevote, 0, types.Hash{byte(i + 1)}))
+	}
+	if n := vs.Count(prevote, types.Hash{10}); n != 0 {
+		t.Fatal("conflicting votes beyond the cap must not be kept")
 	}
 }
 

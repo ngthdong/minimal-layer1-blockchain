@@ -23,7 +23,7 @@ type AddResult int
 const (
 	Added        AddResult = iota // first vote of this validator for this step: counted
 	Duplicate                     // same vote again (gossip, T2): ignored
-	Equivocation                  // same validator, same step, OTHER block (T7): not counted
+	Equivocation                  // same validator, same step, OTHER block (T7): evidence
 )
 
 func (r AddResult) String() string {
@@ -38,22 +38,44 @@ func (r AddResult) String() string {
 	return "unknown"
 }
 
-// VoteSet counts at most ONE vote per validator per step.
+// maxConflicting bounds the extra votes kept per validator and step: a
+// Byzantine validator may sign thousands of blocks for one step, and must
+// not be able to fill our memory with them.
+const maxConflicting = 3
+
+// VoteSet keeps every distinct signed vote of each validator per step, and
+// counts a validator at most ONCE in any tally (rule 7): Count(key, B) is the
+// number of distinct validators that signed a vote for B at key.
+//
+// An honest validator signs one vote per step, so for it nothing changes.
+// An equivocator that signed B for some nodes and NIL for others counts once
+// toward B and once toward NIL, exactly as Tendermint counts signed
+// messages. Keeping only the first copy seen would let the ORDER OF ARRIVAL
+// decide what each node counts: nodes would disagree forever on whether a
+// POL exists, and with f equivocators the chain can stall.
+//
+// Safety is unchanged: two quorums of 2f+1 share at least f+1 validators,
+// at least one of them honest, and an honest validator signed only one of
+// the two blocks. So even counting every Byzantine vote on both sides, no
+// two blocks reach a quorum at the same step.
+//
 // Signatures must be verified BEFORE Add: the set trusts what it is given.
 type VoteSet struct {
-	votes        map[VoteKey]map[types.NodeID]types.Vote // first vote seen
+	votes        map[VoteKey]map[types.NodeID]types.Vote   // first vote seen
+	others       map[VoteKey]map[types.NodeID][]types.Vote // conflicting votes (other blocks)
 	equivocators map[VoteKey]map[types.NodeID]bool
 }
 
 func NewVoteSet() *VoteSet {
 	return &VoteSet{
 		votes:        make(map[VoteKey]map[types.NodeID]types.Vote),
+		others:       make(map[VoteKey]map[types.NodeID][]types.Vote),
 		equivocators: make(map[VoteKey]map[types.NodeID]bool),
 	}
 }
 
-// Add records v. On Equivocation it also returns the vote that was kept, so
-// the caller can log both block hashes as evidence.
+// Add records v. On Equivocation it also returns the first vote of that
+// validator, so the caller can log both block hashes as evidence.
 func (vs *VoteSet) Add(v types.Vote) (AddResult, types.Vote) {
 	key := KeyOf(&v)
 	byVal := vs.votes[key]
@@ -66,22 +88,39 @@ func (vs *VoteSet) Add(v types.Vote) (AddResult, types.Vote) {
 	case !seen:
 		byVal[v.Validator] = v.Clone()
 		return Added, types.Vote{}
-	case first.BlockHash == v.BlockHash:
+	case vs.signed(key, v.Validator, v.BlockHash):
 		return Duplicate, types.Vote{}
-	default:
-		if vs.equivocators[key] == nil {
-			vs.equivocators[key] = make(map[types.NodeID]bool)
-		}
-		vs.equivocators[key][v.Validator] = true
-		return Equivocation, first.Clone()
 	}
+	if vs.equivocators[key] == nil {
+		vs.equivocators[key] = make(map[types.NodeID]bool)
+		vs.others[key] = make(map[types.NodeID][]types.Vote)
+	}
+	vs.equivocators[key][v.Validator] = true
+	if len(vs.others[key][v.Validator]) < maxConflicting {
+		vs.others[key][v.Validator] = append(vs.others[key][v.Validator], v.Clone())
+	}
+	return Equivocation, first.Clone()
 }
 
-// Count returns how many validators voted for hash at key (ZeroHash = NIL).
+// signed reports whether validator id signed a vote for hash at key.
+func (vs *VoteSet) signed(key VoteKey, id types.NodeID, hash types.Hash) bool {
+	if v, ok := vs.votes[key][id]; ok && v.BlockHash == hash {
+		return true
+	}
+	for _, o := range vs.others[key][id] {
+		if o.BlockHash == hash {
+			return true
+		}
+	}
+	return false
+}
+
+// Count returns how many distinct validators signed a vote for hash at key
+// (ZeroHash = NIL).
 func (vs *VoteSet) Count(key VoteKey, hash types.Hash) int {
 	n := 0
-	for _, v := range vs.votes[key] {
-		if v.BlockHash == hash {
+	for id := range vs.votes[key] {
+		if vs.signed(key, id, hash) {
 			n++
 		}
 	}
@@ -96,9 +135,12 @@ func (vs *VoteSet) CountAny(key VoteKey) int { return len(vs.votes[key]) }
 // votes at key. With quorum = 2f+1 > n/2 at most one hash can qualify; ties
 // are still broken by hash order so the answer never depends on map order.
 func (vs *VoteSet) Majority(key VoteKey, quorum int) (types.Hash, bool) {
-	counts := map[types.Hash]int{}
-	for _, v := range vs.votes[key] {
+	counts := map[types.Hash]int{} // a validator's hashes are distinct: one count each
+	for id, v := range vs.votes[key] {
 		counts[v.BlockHash]++
+		for _, o := range vs.others[key][id] {
+			counts[o.BlockHash]++
+		}
 	}
 	var best types.Hash
 	found := false
@@ -114,9 +156,11 @@ func (vs *VoteSet) Majority(key VoteKey, quorum int) (types.Hash, bool) {
 // (the order used in a CommitCert).
 func (vs *VoteSet) VotesFor(key VoteKey, hash types.Hash) []types.Vote {
 	var out []types.Vote
-	for _, v := range vs.votes[key] {
-		if v.BlockHash == hash {
-			out = append(out, v.Clone())
+	for id, v := range vs.votes[key] {
+		for _, c := range append([]types.Vote{v}, vs.others[key][id]...) {
+			if c.BlockHash == hash {
+				out = append(out, c.Clone()) // at most one per validator
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Validator < out[j].Validator })

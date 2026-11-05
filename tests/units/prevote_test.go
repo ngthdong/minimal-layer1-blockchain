@@ -110,20 +110,24 @@ func TestPrevoteNilForInvalidBlock(t *testing.T) {
 	}
 }
 
-// T7 at engine level: the evidence is logged once and the vote not counted.
+// T7 at engine level: the evidence is logged once and relayed once; the
+// second vote counts toward its own block, the validator still once per tally.
 func TestEquivocationIsLoggedOnce(t *testing.T) {
 	e, env, bh := readyEngine(t)
 	a, b := signedVote(3, types.Prevote, 1, 0, bh), signedVote(3, types.Prevote, 1, 0, blockB)
 	e.OnVote(3, &a)
-	if !e.OnVote(3, &b) || !e.OnVote(3, &b) {
+	if !e.OnVote(3, &b) {
 		t.Fatal("an equivocating vote must be relayed as evidence")
+	}
+	if e.OnVote(3, &b) {
+		t.Fatal("the same evidence again is a duplicate")
 	}
 	if count(env, "EQUIVOCATION h=1 r=0 validator 03") != 1 {
 		t.Fatalf("logs = %q", env.logs)
 	}
 	key := consensus.VoteKey{Height: 1, Round: 0, Type: types.Prevote}
-	if e.Votes.Count(key, blockB) != 0 {
-		t.Fatal("equivocating vote was counted")
+	if e.Votes.Count(key, bh) != 2 || e.Votes.Count(key, blockB) != 1 || e.Votes.CountAny(key) != 2 {
+		t.Fatal("want 2 votes for the block (ours, 3), 1 for B (3), 2 validators")
 	}
 }
 

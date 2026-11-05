@@ -35,7 +35,8 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 			e.env.Log(logging.EvEquivocation, v.Height, v.Round, "validator", node(v.Validator),
 				"type", v.Type.String(), "first", blockLabel(first.BlockHash), "second", blockLabel(v.BlockHash))
 		}
-		return true
+		// The second vote is signed too: it now counts toward ITS block
+		// (once), so the rules must be re-checked like for any new vote.
 	}
 	e.progress()
 	return true

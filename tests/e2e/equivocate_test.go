@@ -40,3 +40,17 @@ func checkT7(t *testing.T, cfg *simconfig.Config, res *sim.Result, log []byte) {
 		}
 	}
 }
+
+// T7 with 20% loss before GST (10 s). With "first copy wins" counting this
+// run never finalized block 1: one honest node locked on a block whose POL
+// included the equivocators' real votes, while the others held their NIL
+// copies and could never see that POL. Counting every signed vote once per
+// tally makes all nodes agree on what each validator signed.
+func TestT7EquivocationWithDropsStaysLive(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t7_byzantine")
+	cfg.Seed = 1
+	cfg.Network.GSTMs = 10_000
+	cfg.Network.PreGST = simconfig.PreGSTConfig{DropProb: 0.2, DupProb: 0.1, MaxDelayMs: 600}
+	res, log := testutil.Run(t, cfg, "T7_byzantine_drops")
+	checkT7(t, cfg, res, log)
+}
