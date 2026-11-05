@@ -8,9 +8,19 @@ package byzantine
 import (
 	"fmt"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/crypto"
 	"github.com/ngthdong/minimal-layer1-blockchain/network"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
+
+// Identity is what a Byzantine validator owns: its id, its OWN key (never
+// another's), the chain it signs for, and the size of the validator set.
+type Identity struct {
+	ID      types.NodeID
+	Priv    crypto.PrivateKey
+	ChainID string
+	N       int
+}
 
 // Behavior decides what its node really sends when the honest code of that
 // node sends msg to peer `to`.
@@ -31,14 +41,16 @@ type Silent struct{}
 
 func (Silent) Outgoing(types.NodeID, types.Message) []types.Message { return nil }
 
-// New returns the behaviour named in a scenario file ("crash" is not one:
-// it also stops the node's inputs, see node.Crash).
-func New(name string) (Behavior, error) {
+// New returns the behaviour named in a scenario file for validator self
+// ("crash" is not one: it also stops the node's inputs, see node.Crash).
+func New(name string, self Identity) (Behavior, error) {
 	switch name {
 	case "honest":
 		return Honest{}, nil
 	case "silent":
 		return Silent{}, nil
+	case "equivocate":
+		return Equivocate{Self: self}, nil
 	}
 	return nil, fmt.Errorf("byzantine behavior %q is not implemented", name)
 }

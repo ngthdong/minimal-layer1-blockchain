@@ -84,7 +84,8 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 			sched.At(b.FromMs, nd.Crash)
 			continue
 		}
-		beh, err := byzantine.New(b.Behavior)
+		beh, err := byzantine.New(b.Behavior, byzantine.Identity{
+			ID: nd.ID, Priv: privs[b.Node], ChainID: cfg.ChainID, N: cfg.NumValidators})
 		if err != nil {
 			return nil, err
 		}

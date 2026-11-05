@@ -1,0 +1,36 @@
+{
+  "name": "t7_byzantine",
+  "chain_id": "ml1-chain",
+  "seed": 42,
+  "num_validators": 10,
+  "max_height": 10,
+  "max_time_ms": 120000,
+  "network": {
+    "gst_ms": 0,
+    "delta_ms": 200,
+    "min_delay_ms": 10,
+    "pre_gst": { "drop_prob": 0.0, "dup_prob": 0.0, "max_delay_ms": 200 },
+    "rate_limit": { "capacity": 500, "refill_per_ms": 5, "queue_limit": 2000 },
+    "peer_block": { "window_ms": 1000, "max_msgs": 5000, "block_ms": 3000 },
+    "topology": "full",
+    "topology_file": ""
+  },
+  "consensus": {
+    "timeout_propose_ms": 1000,
+    "timeout_prevote_ms": 500,
+    "timeout_precommit_ms": 500,
+    "timeout_delta_ms": 500,
+    "max_block_txs": 10
+  },
+  "workload": {
+    "accounts": ["Alice", "Bob", "Carol"],
+    "tx_count": 60,
+    "interval_ms": 100,
+    "inject": []
+  },
+  "byzantine": [
+    { "node": 2, "behavior": "equivocate", "from_ms": 0 },
+    { "node": 5, "behavior": "equivocate", "from_ms": 0 },
+    { "node": 8, "behavior": "equivocate", "from_ms": 0 }
+  ]
+}
