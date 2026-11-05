@@ -26,8 +26,9 @@ type Node struct {
 	Mempool *mempool.Mempool
 	Engine  *consensus.Engine // set by the runner; nil in mempool-only tests
 
-	seen    map[types.Hash]struct{} // message IDs already handled (gossip dedup)
-	crashed bool                    // stopped for good (Crash)
+	seen      map[types.Hash]struct{}       // message IDs already handled (gossip dedup)
+	crashed   bool                          // stopped for good (Crash)
+	blockHook func(types.Block) types.Block // Byzantine proposer, nil when honest
 
 	synced    map[uint64]syncedBlock // sync answers waiting for their turn
 	syncAsked bool                   // a SyncRequest went out at syncAt

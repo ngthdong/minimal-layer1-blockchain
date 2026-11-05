@@ -51,8 +51,29 @@ func New(name string, self Identity) (Behavior, error) {
 		return Silent{}, nil
 	case "equivocate":
 		return Equivocate{Self: self}, nil
+	case "invalid_proposal":
+		return &InvalidProposal{}, nil
 	}
 	return nil, fmt.Errorf("byzantine behavior %q is not implemented", name)
+}
+
+// BlockCorrupter is implemented by behaviours that tamper with the blocks
+// their own node builds as proposer (the runner installs it with
+// node.SetBlockHook). The bad block is then signed with the node's own key
+// and served on request like any other: what is wrong is the block itself,
+// not a signature, so only executing it can tell.
+type BlockCorrupter interface {
+	CorruptBlock(b types.Block) types.Block
+}
+
+// BlockHook turns c into a node block hook, active from fromMs on.
+func BlockHook(c BlockCorrupter, fromMs uint64, now func() uint64) func(types.Block) types.Block {
+	return func(b types.Block) types.Block {
+		if now() < fromMs {
+			return b
+		}
+		return c.CorruptBlock(b)
+	}
 }
 
 // Hook turns b into the node's network send hook, active from fromMs on:

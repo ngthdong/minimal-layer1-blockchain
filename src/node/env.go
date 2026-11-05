@@ -15,6 +15,11 @@ func (n *Node) Send(to types.NodeID, m types.Message)          { n.net.Send(n.ID
 func (n *Node) LastHash() types.Hash                           { return n.Ledger.LastHash() }
 func (n *Node) Log(ev string, h uint64, r int32, kv ...string) { n.log.Log(int(n.ID), ev, h, r, kv...) }
 
+// SetBlockHook lets a Byzantine behaviour rewrite every block this node
+// builds as proposer. The engine then signs, announces and serves the
+// rewritten block exactly like an honest one.
+func (n *Node) SetBlockHook(f func(types.Block) types.Block) { n.blockHook = f }
+
 // BuildBlock takes up to maxTxs ready transactions from the mempool and
 // executes them on a copy of the state. Reap only returns txs that apply in
 // order, so execution cannot fail; if it ever did, the block is left empty
@@ -32,7 +37,11 @@ func (n *Node) BuildBlock(height uint64, parent types.Hash, maxTxs int) (types.B
 		TxRoot:     types.TxRoot(txs),
 		StateHash:  post.Hash(),
 	}
-	return types.Block{Header: hdr, Txs: txs}, post
+	block := types.Block{Header: hdr, Txs: txs}
+	if n.blockHook != nil {
+		block = n.blockHook(block) // a Byzantine proposer (package byzantine)
+	}
+	return block, post
 }
 
 // ExecuteBody checks a received body against the node's current state.

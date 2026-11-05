@@ -3,7 +3,7 @@
   "chain_id": "ml1-chain",
   "seed": 42,
   "num_validators": 10,
-  "max_height": 10,
+  "max_height": 30,
   "max_time_ms": 120000,
   "network": {
     "gst_ms": 0,
@@ -31,6 +31,6 @@
   "byzantine": [
     { "node": 2, "behavior": "equivocate", "from_ms": 0 },
     { "node": 5, "behavior": "equivocate", "from_ms": 0 },
-    { "node": 8, "behavior": "equivocate", "from_ms": 0 }
+    { "node": 8, "behavior": "invalid_proposal", "from_ms": 0 }
   ]
 }

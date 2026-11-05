@@ -90,6 +90,9 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 			return nil, err
 		}
 		net.SetOutbound(nd.ID, byzantine.Hook(beh, b.FromMs, sched.Now))
+		if c, ok := beh.(byzantine.BlockCorrupter); ok {
+			nd.SetBlockHook(byzantine.BlockHook(c, b.FromMs, sched.Now))
+		}
 		if _, honest := beh.(byzantine.Honest); !honest { // clients cannot tell it from an honest node
 			byzFrom[nd.ID] = b.FromMs
 		}

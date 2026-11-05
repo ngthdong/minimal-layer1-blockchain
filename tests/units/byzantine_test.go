@@ -1,10 +1,12 @@
 package unit
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/ngthdong/minimal-layer1-blockchain/byzantine"
 	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
+	"github.com/ngthdong/minimal-layer1-blockchain/state"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
@@ -73,5 +75,39 @@ func TestEquivocateSplitsItsOwnVotes(t *testing.T) {
 	relayed := &types.VoteMsg{Vote: signedVote(6, types.Prevote, 1, 0, blockB)} // someone else's
 	if out := b.Outgoing(9, relayed); out[0] != relayed {
 		t.Fatal("votes of other validators are relayed unchanged")
+	}
+}
+
+// InvalidProposal: block 1 breaks a tx signature (the body still matches its
+// TxRoot), block 2 the state hash, block 3 the parent; then it starts again.
+// An empty block cannot carry a bad tx and gets a bad state hash instead.
+func TestInvalidProposalKinds(t *testing.T) {
+	b, err := byzantine.New("invalid_proposal", byzantine.Identity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := b.(byzantine.BlockCorrupter)
+	hdr, txs := block(8, goodTx("Alice", 1, "a"))
+	good := types.Block{Header: hdr, Txs: txs}
+	execute := func(blk types.Block) error {
+		_, err := consensus.ExecuteBody(chain, registry(), state.New(), &blk.Header, blk.Txs, 10)
+		return err
+	}
+	if b1 := c.CorruptBlock(good); !errors.Is(execute(b1), state.ErrBadSignature) {
+		t.Fatalf("block 1: %v, want bad_signature", execute(b1))
+	}
+	if b2 := c.CorruptBlock(good); !errors.Is(execute(b2), consensus.ErrBadStateHash) {
+		t.Fatalf("block 2: %v, want bad_state_hash", execute(b2))
+	}
+	if b3 := c.CorruptBlock(good); b3.Header.ParentHash == good.Header.ParentHash || execute(b3) != nil {
+		t.Fatal("block 3 must keep a valid body but point to another parent")
+	}
+	empty := types.Block{Header: types.BlockHeader{ChainID: chain, Height: 1, TxRoot: types.TxRoot(nil),
+		StateHash: state.New().Hash()}}
+	if b4 := c.CorruptBlock(empty); !errors.Is(execute(b4), consensus.ErrBadStateHash) {
+		t.Fatalf("empty block 4: %v, want bad_state_hash", execute(b4))
+	}
+	if execute(good) != nil {
+		t.Fatal("CorruptBlock must not change the block it was given")
 	}
 }
