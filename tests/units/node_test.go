@@ -129,3 +129,29 @@ func TestReplayedTxIsRejected(t *testing.T) {
 		t.Fatalf("replay not rejected or was relayed:\n%s", log)
 	}
 }
+
+// T4 at node level: a client resubmitting a tx the node already holds gets a
+// REJECT with reason, and nothing is stored or relayed a second time.
+func TestClientReplayIsRejectedWithReason(t *testing.T) {
+	sched, nodes, readLog := nodeNet(4, 0)
+	tx := goodTx("Alice", 1, "hello")
+	nodes[0].SubmitTx(tx)
+	sched.Run(10_000, nil)
+	const txSend = "ev=SEND          h=0 r=0 type=TX"
+	before := strings.Count(readLog(), txSend)
+	nodes[1].SubmitTx(tx) // the same bytes, to another node
+	sched.Run(20_000, nil)
+	log := readLog()
+	id := (&types.TxMsg{Tx: tx}).ID().Short()
+	if !strings.Contains(log, "node=01 ev=REJECT        h=0 r=0 type=TX id="+id+" from=client reason=duplicate_tx") {
+		t.Fatalf("no REJECT for the replay:\n%s", log)
+	}
+	if strings.Count(log, txSend) != before {
+		t.Fatal("the replay was relayed")
+	}
+	for i, size := range mempoolSizes(nodes) {
+		if size != 1 {
+			t.Fatalf("node %d mempool size %d, want 1", i, size)
+		}
+	}
+}

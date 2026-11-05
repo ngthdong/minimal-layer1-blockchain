@@ -1,6 +1,6 @@
 // Package workload plays the clients (Alice, Bob, ...): it decides, before the
 // run starts, which signed transactions are handed to which node and when.
-// Crafted bad transactions (T3) are in inject.go.
+// Crafted bad transactions (T3) and replays (T4) are in inject.go.
 package workload
 
 import (

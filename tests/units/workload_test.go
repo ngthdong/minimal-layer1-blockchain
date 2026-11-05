@@ -93,3 +93,36 @@ func TestInjectedTxs(t *testing.T) {
 		t.Fatal("injections changed the normal plan")
 	}
 }
+
+// A replay resends the account's last tx byte for byte, to nodes other than
+// the one the client used first; a replay before any tx is a config error.
+func TestReplayInjection(t *testing.T) {
+	normal, cfg := planFor(t)
+	cfg.Workload.Inject = []simconfig.InjectTx{{Kind: "replay", AtMs: 1000, Account: "Bob", Repeat: 3}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	plan := workload.Plan(cfg, workload.Accounts(cfg.Seed, cfg.Workload.Accounts), sim.NewRNG(cfg.Seed, "workload"))
+	var orig workload.Submission // Bob's last tx before 1000 ms: tx 7, at 800 ms
+	for _, s := range normal {
+		if s.Tx.Sender == "Bob" && s.AtMs < 1000 {
+			orig = s
+		}
+	}
+	copies := 0
+	for i, s := range plan {
+		if s.AtMs == 1000 && i > 0 && plan[i-1].AtMs == 1000 { // after the normal tx of 1000 ms
+			if !reflect.DeepEqual(s.Tx, orig.Tx) || s.To == orig.To {
+				t.Fatalf("copy %d: to %d, tx %+v; original to %d", copies, s.To, s.Tx, orig.To)
+			}
+			copies++
+		}
+	}
+	if copies != 3 || orig.AtMs != 800 {
+		t.Fatalf("%d copies of the tx sent at %d ms", copies, orig.AtMs)
+	}
+	cfg.Workload.Inject[0].AtMs = 200 // Bob (second account) sends first at 200 ms
+	if cfg.Validate() == nil {
+		t.Fatal("replay of a tx not sent yet was accepted")
+	}
+}

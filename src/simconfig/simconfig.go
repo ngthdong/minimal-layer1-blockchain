@@ -80,10 +80,11 @@ type ByzantineSpec struct {
 	FromMs   uint64 `json:"from_ms"`
 }
 
-// F is the fault threshold for n = 3f+1.
-// InjectKinds are the crafted bad transactions the workload can add (T3).
-var InjectKinds = map[string]bool{"bad_signature": true, "wrong_domain": true, "foreign_key": true}
+// InjectKinds are the crafted bad transactions the workload can add: three
+// forgeries (T3) and the replay of a tx the account already sent (T4).
+var InjectKinds = map[string]bool{"bad_signature": true, "wrong_domain": true, "foreign_key": true, "replay": true}
 
+// F is the fault threshold for n = 3f+1.
 func (c *Config) F() int { return (c.NumValidators - 1) / 3 }
 
 func Load(path string) (*Config, error) {
@@ -151,6 +152,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("inject foreign_key needs a second account to steal a key from")
 		case in.Repeat < 0:
 			return fmt.Errorf("inject repeat must be >= 0")
+		case in.Kind == "replay" && !sentBefore(c.Workload, in.Account, in.AtMs):
+			return fmt.Errorf("inject replay at %d ms: %s has sent no tx yet", in.AtMs, in.Account)
 		}
 	}
 	seenNode := map[int]bool{}
@@ -164,3 +167,15 @@ func (c *Config) Validate() error {
 }
 
 func isProb(p float64) bool { return p >= 0 && p <= 1 }
+
+// sentBefore reports whether account sends a normal tx strictly before at.
+// It mirrors workload.Plan: tx i goes out at (i+1)*interval_ms from
+// accounts[i mod len], so account k sends first at (k+1)*interval_ms.
+func sentBefore(w WorkloadConfig, account string, at uint64) bool {
+	for k, a := range w.Accounts {
+		if a == account {
+			return k < w.TxCount && uint64(k+1)*w.IntervalMs < at
+		}
+	}
+	return false
+}

@@ -8,12 +8,13 @@ import (
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
-// injected builds the crafted bad txs of cfg.Workload.Inject (T3). Each kind
+// injected builds the crafted bad txs of cfg.Workload.Inject. Each kind
 // breaks exactly one check, so every node must log exactly that reason:
 //
 //	bad_signature → bad_signature            (one signature byte flipped)
 //	wrong_domain  → wrong_domain             (signed under "VOTE:<chain>")
 //	foreign_key   → key_not_owned_by_sender  (writes the next account's key)
+//	replay        → duplicate_tx             (the account's last tx, byte for byte)
 //
 // A bad tx carries the account's next nonce at its time, i.e. the nonce of
 // its next real tx: if any node wrongly accepted it, that real tx would be
@@ -23,6 +24,10 @@ func injected(cfg *simconfig.Config, accounts []*Account, plan []Submission, rng
 	for i, in := range cfg.Workload.Inject {
 		idx := accountIndex(accounts, in.Account)
 		a := accounts[idx]
+		if in.Kind == "replay" {
+			out = append(out, replays(plan, a.Name, in, cfg.NumValidators)...)
+			continue
+		}
 		nonce := lastNonceAt(plan, a.Name, in.AtMs) + 1
 		key, value := a.Name+"/message", []byte(fmt.Sprintf("inject-%d-%s", i, in.Kind))
 		domain := crypto.DomainTx
@@ -62,4 +67,23 @@ func lastNonceAt(plan []Submission, sender string, at uint64) uint64 {
 		}
 	}
 	return n
+}
+
+// replays resends, byte for byte, the last tx the account sent before
+// in.AtMs: copy k goes to node orig.To+1+k, so the copies reach nodes other
+// than the one the client first used. The real copy already has a valid
+// signature; only the nonce (state and mempool) can stop it (T4).
+func replays(plan []Submission, sender string, in simconfig.InjectTx, n int) []Submission {
+	var orig Submission
+	for _, s := range plan {
+		if s.AtMs < in.AtMs && s.Tx.Sender == sender {
+			orig = s // plan is in time order: the last match is the latest tx
+		}
+	}
+	out := make([]Submission, 0, max(in.Repeat, 1))
+	for k := 0; k < max(in.Repeat, 1); k++ {
+		to := types.NodeID((int(orig.To) + 1 + k) % n)
+		out = append(out, Submission{AtMs: in.AtMs, To: to, Tx: orig.Tx.Clone()})
+	}
+	return out
 }

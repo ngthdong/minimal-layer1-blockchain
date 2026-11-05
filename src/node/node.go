@@ -113,6 +113,8 @@ func (n *Node) onBodyRequest(from types.NodeID, req *types.BodyRequest) {
 
 // SubmitTx is how a client hands a transaction to this node (workload).
 // It is logged as RECV from=client, so every tx's entry point is in the log.
+// Unlike gossip, a client submission is never dropped silently as "seen":
+// a client that resubmits a known tx (T4 replay) gets a REJECT with reason.
 func (n *Node) SubmitTx(tx types.Tx) {
 	if n.crashed {
 		return // the client's tx is lost, as with a real dead server
@@ -120,10 +122,7 @@ func (n *Node) SubmitTx(tx types.Tx) {
 	m := &types.TxMsg{Tx: tx.Clone()} // never share memory with the client
 	id := m.ID()
 	n.log.Log(int(n.ID), logging.EvRecv, 0, 0, "type", "TX", "id", id.Short(), "from", "client")
-	if _, dup := n.seen[id]; dup {
-		return
-	}
-	n.seen[id] = struct{}{}
+	n.seen[id] = struct{}{} // peers relaying it back to us are still de-duplicated
 	n.onTx(n.ID, m)
 }
 
@@ -137,7 +136,10 @@ func (n *Node) onTx(from types.NodeID, m *types.TxMsg) {
 	}
 	switch err := n.Mempool.Add(*tx, n.State.Nonce(tx.Sender)); {
 	case errors.Is(err, mempool.ErrDuplicate):
-		return // same tx with another message ID: nothing new to tell peers
+		if from == n.ID {
+			n.reject(m, from, err) // a client replays a pending or committed tx (T4)
+		}
+		return // nothing new to tell peers
 	case err != nil:
 		n.reject(m, from, err) // stale_nonce: a replay (T4)
 		return
