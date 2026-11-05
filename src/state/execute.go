@@ -34,6 +34,20 @@ func (s *State) Nonce(sender string) uint64 {
 }
 
 func (s *State) VerifyTx(chainID string, reg Registry, tx *types.Tx) error {
+	if err := CheckTx(chainID, reg, tx); err != nil {
+		return err
+	}
+	if tx.Nonce != s.Nonce(tx.Sender)+1 {
+		return ErrBadNonce
+	}
+	return nil
+}
+
+// CheckTx runs checks 1–3 of VerifyTx: everything that does not depend on the
+// current state. Nodes use it when a tx arrives from the network, because a
+// tx whose nonce is still in the future is valid and must be kept, not
+// rejected (the mempool waits for the missing nonces).
+func CheckTx(chainID string, reg Registry, tx *types.Tx) error {
 	pub, ok := reg[tx.Sender]
 	if !ok {
 		return ErrUnknownSender
@@ -43,9 +57,6 @@ func (s *State) VerifyTx(chainID string, reg Registry, tx *types.Tx) error {
 	}
 	if Owner(tx.Key) != tx.Sender {
 		return ErrNotOwner
-	}
-	if tx.Nonce != s.Nonce(tx.Sender)+1 {
-		return ErrBadNonce
 	}
 	return nil
 }
