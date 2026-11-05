@@ -122,20 +122,30 @@ func (e *Engine) enterNewRound(r int32) {
 	}
 }
 
-// propose builds a fresh block from the mempool and broadcasts its HEADER only, 
-// inside a signed proposal. Peers fetch the body from us when they accept the header.
+// propose announces the block of this round. If an earlier round of this
+// height produced 2f+1 prevotes for a block (ValidHash), that block is
+// proposed AGAIN, unchanged, with POLRound = ValidRound: honest nodes may be
+// locked on it, and a fresh block would only collect their NIL prevotes.
+// Otherwise a fresh block is built from the mempool. Only the HEADER is
+// broadcast, inside a signed proposal; peers fetch the body from us.
 func (e *Engine) propose() {
-	block, post := e.env.BuildBlock(e.Height, e.env.LastHash(), e.cfg.MaxBlockTxs)
-	e.signer.SignHeader(&block.Header)
-	p := types.Proposal{Height: e.Height, Round: e.Round, POLRound: -1, Header: block.Header}
+	p := types.Proposal{Height: e.Height, Round: e.Round, POLRound: -1}
+	if e.ValidRound >= 0 && e.bodies[e.ValidHash] != nil {
+		p.POLRound, p.Header = e.ValidRound, e.headers[e.ValidHash] // builder's signature kept
+	} else {
+		block, post := e.env.BuildBlock(e.Height, e.env.LastHash(), e.cfg.MaxBlockTxs)
+		e.signer.SignHeader(&block.Header)
+		p.Header = block.Header
+		e.headers[block.Hash()] = block.Header
+		e.bodies[block.Hash()] = &pending{block: block.Clone(), post: post}
+	}
 	if e.signer.SignProposal(&p) != nil {
 		return
 	}
-	bh := block.Hash()
+	bh := p.BlockHash()
 	e.proposals[e.Round] = p
-	e.headers[bh] = block.Header
-	e.bodies[bh] = &pending{block: block.Clone(), post: post}
-	e.env.Log(logging.EvPropose, e.Height, e.Round, "block", bh.Short(), "txs", strconv.Itoa(len(block.Txs)))
+	e.env.Log(logging.EvPropose, e.Height, e.Round, "block", bh.Short(),
+		"txs", strconv.Itoa(len(e.bodies[bh].block.Txs)), "pol", strconv.Itoa(int(p.POLRound)))
 	e.env.Broadcast(&types.ProposalMsg{Proposal: p})
 	e.progress()
 }
@@ -162,12 +172,20 @@ func (e *Engine) OnProposal(from types.NodeID, p *types.Proposal) {
 	bh := p.BlockHash()
 	e.proposals[p.Round] = *p
 	e.env.Log(logging.EvHeaderAccept, p.Height, p.Round, "block", bh.Short(), "from", node(from))
-	if _, known := e.headers[bh]; known {
-		e.progress() // same block re-proposed in a later round: body already requested or known
-		return
+	if _, known := e.headers[bh]; !known {
+		e.headers[bh] = p.Header
 	}
-	e.headers[bh] = p.Header
-	e.env.Send(from, &types.BodyRequest{Height: p.Height, BlockHash: bh})
+	switch {
+	case e.bodies[bh] != nil:
+		// The same block proposed again in a later round: we already hold
+		// (and can serve) its body, so we relay the proposal at once.
+		e.env.Broadcast(&types.ProposalMsg{Proposal: *p})
+	case !e.invalid[bh]:
+		// New block, or a re-proposal whose body never reached us: ask the
+		// peer that just announced it (it holds the body).
+		e.env.Send(from, &types.BodyRequest{Height: p.Height, BlockHash: bh})
+	}
+	e.progress()
 }
 
 // OnBody handles the transactions of a block whose header we accepted.

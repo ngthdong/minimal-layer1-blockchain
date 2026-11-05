@@ -46,18 +46,20 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 func (e *Engine) progress() {
 	e.tryPrevote()
 	e.checkPrevoteQuorum()
+	e.updateValid()
 	e.checkTimers()
 	e.checkCommit() // last: it may start the next height
 }
 
-// tryPrevote: rule 3 (prevote only valid blocks) and rule 5 (respect the lock).
+// tryPrevote: rules 3 and 5 for the proposal of the current round.
 //
-// With a proposal for the current round:
-//   - body executed correctly → prevote B, unless locked on another block;
-//   - body provably invalid   → prevote NIL;
-//   - body not known yet      → wait (the propose timeout prevotes NIL).
-//
-// Proposals that carry a POL round.
+//   - body provably invalid → prevote NIL;
+//   - body not known yet    → wait (the propose timeout prevotes NIL);
+//   - POLRound = -1 (fresh block): prevote B unless locked on another block;
+//   - POLRound = vr >= 0 (B proposed again): wait until we also see the 2f+1
+//     prevotes for B in round vr, then prevote B if we are not locked, locked
+//     on B, or locked in a round <= vr (we UNLOCK: the network has moved on
+//     to B since our lock); otherwise prevote NIL.
 func (e *Engine) tryPrevote() {
 	if e.Step != StepPropose {
 		return
@@ -72,11 +74,47 @@ func (e *Engine) tryPrevote() {
 		bh = types.ZeroHash
 	case e.bodies[bh] == nil:
 		return
-	case e.LockedRound != -1 && e.LockedHash != bh:
-		bh = types.ZeroHash // locked on something else (rule 5)
+	case p.POLRound >= 0 && !e.hasPOL(p.POLRound, bh):
+		return // the proof-of-lock has not reached us (yet)
+	case e.LockedRound == -1 || e.LockedHash == bh:
+		// not locked, or locked on B itself: prevote B
+	case p.POLRound >= 0 && e.LockedRound <= p.POLRound:
+		e.unlock(p.POLRound)
+	default:
+		bh = types.ZeroHash // locked on another block (rule 5)
 	}
 	if e.castVote(types.Prevote, bh) {
 		e.Step = StepPrevote
+	}
+}
+
+// hasPOL reports whether we hold 2f+1 prevotes for bh in round r.
+func (e *Engine) hasPOL(r int32, bh types.Hash) bool {
+	got, ok := e.Votes.Majority(VoteKey{Height: e.Height, Round: r, Type: types.Prevote}, e.vals.Quorum())
+	return ok && got == bh
+}
+
+// unlock releases our lock because a later round (pol) proved 2f+1 prevotes
+// for another block. Safe: if our locked block had been decided, no other
+// block could have gathered 2f+1 prevotes in a round after it.
+func (e *Engine) unlock(pol int32) {
+	e.env.Log(logging.EvUnlock, e.Height, e.Round, "block", e.LockedHash.Short(),
+		"locked_round", strconv.Itoa(int(e.LockedRound)), "pol", strconv.Itoa(int(pol)))
+	e.LockedRound, e.LockedHash = -1, types.ZeroHash
+}
+
+// updateValid remembers the latest block that got 2f+1 prevotes in a round
+// up to the current one, even if we did not lock on it (we had already left
+// that round, or precommitted NIL on a timeout). It is what we propose again.
+func (e *Engine) updateValid() {
+	for _, r := range e.Votes.Rounds(e.Height, types.Prevote) {
+		if r <= e.ValidRound || r > e.Round {
+			continue
+		}
+		bh, ok := e.Votes.Majority(VoteKey{Height: e.Height, Round: r, Type: types.Prevote}, e.vals.Quorum())
+		if ok && !bh.IsZero() && e.bodies[bh] != nil {
+			e.ValidRound, e.ValidHash = r, bh
+		}
 	}
 }
 
