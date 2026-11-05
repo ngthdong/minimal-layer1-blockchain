@@ -7,9 +7,9 @@ import (
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
-// ErrDoubleSign is returned when asked to sign a second, DIFFERENT vote for a
-// step that already has one. An honest validator must never do that: two
-// conflicting signed votes for one step are exactly what equivocation is.
+// ErrDoubleSign is returned when asked to sign a second, DIFFERENT vote (or
+// proposal) for a step that already has one. An honest validator must never
+// do that: two conflicting signed messages for one step are equivocation.
 var ErrDoubleSign = errors.New("double_sign_refused")
 
 // VoteSigner is the only holder of a validator's private key for votes.
@@ -18,17 +18,42 @@ var ErrDoubleSign = errors.New("double_sign_refused")
 //
 //   - at most one vote per (height, round, type);
 //   - asking again for the SAME vote returns the stored one (used to re-send
-//     votes after a timeout);
+//     votes after a timeout, stage 29);
 //   - asking for a different vote in a step already signed is refused.
+//
+// It also signs headers and proposals, with the same guard: at most one
+// proposal per (height, round).
 type VoteSigner struct {
-	id      types.NodeID
-	priv    crypto.PrivateKey
-	chainID string
-	signed  map[VoteKey]types.Vote
+	id        types.NodeID
+	priv      crypto.PrivateKey
+	chainID   string
+	signed    map[VoteKey]types.Vote
+	proposals map[VoteKey]types.Hash // Type unused (0): key = (height, round)
 }
 
 func NewVoteSigner(id types.NodeID, priv crypto.PrivateKey, chainID string) *VoteSigner {
-	return &VoteSigner{id: id, priv: priv, chainID: chainID, signed: make(map[VoteKey]types.Vote)}
+	return &VoteSigner{id: id, priv: priv, chainID: chainID,
+		signed: make(map[VoteKey]types.Vote), proposals: make(map[VoteKey]types.Hash)}
+}
+
+// SignHeader signs a header this validator built, under "HEADER:<chain_id>".
+func (s *VoteSigner) SignHeader(h *types.BlockHeader) {
+	h.Proposer = s.id
+	h.Sig = crypto.Sign(s.priv, crypto.Context(crypto.DomainHeader, s.chainID), h.SigningBytes())
+}
+
+// SignProposal signs p (Proposer is set to this validator) under
+// "PROPOSAL:<chain_id>". A second proposal for another block in the same
+// (height, round) is refused.
+func (s *VoteSigner) SignProposal(p *types.Proposal) error {
+	key := VoteKey{Height: p.Height, Round: p.Round}
+	if prev, ok := s.proposals[key]; ok && prev != p.BlockHash() {
+		return ErrDoubleSign
+	}
+	p.Proposer = s.id
+	p.Sig = crypto.Sign(s.priv, crypto.Context(crypto.DomainProposal, s.chainID), p.SigningBytes())
+	s.proposals[key] = p.BlockHash()
+	return nil
 }
 
 // Sign returns this validator's vote for (h, r, typ) on hash (ZeroHash = NIL),
@@ -58,6 +83,11 @@ func (s *VoteSigner) Prune(h uint64) {
 	for k := range s.signed {
 		if k.Height < h {
 			delete(s.signed, k)
+		}
+	}
+	for k := range s.proposals {
+		if k.Height < h {
+			delete(s.proposals, k)
 		}
 	}
 }
