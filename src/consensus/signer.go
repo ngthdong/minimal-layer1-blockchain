@@ -18,7 +18,7 @@ var ErrDoubleSign = errors.New("double_sign_refused")
 //
 //   - at most one vote per (height, round, type);
 //   - asking again for the SAME vote returns the stored one (used to re-send
-//     votes after a timeout, stage 29);
+//     votes after a timeout);
 //   - asking for a different vote in a step already signed is refused.
 //
 // It also signs headers and proposals, with the same guard: at most one
