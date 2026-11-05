@@ -48,6 +48,17 @@ func (f *fakeEnv) ExecuteBody(hdr *types.BlockHeader, txs []types.Tx, max int) (
 	return consensus.ExecuteBody(chain, registry(), f.st, hdr, txs, max)
 }
 
+// proposals counts the proposals broadcast (votes are broadcast too).
+func proposals(f *fakeEnv) int {
+	n := 0
+	for _, m := range f.bcast {
+		if _, ok := m.(*types.ProposalMsg); ok {
+			n++
+		}
+	}
+	return n
+}
+
 func (f *fakeEnv) logged(prefix string) bool {
 	for _, l := range f.logs {
 		if strings.HasPrefix(l, prefix) {
@@ -86,8 +97,8 @@ func proposerEngine(t *testing.T) (*consensus.Engine, types.Proposal, []types.Tx
 	e, env := newEngine(t, id)
 	env.toPack = []types.Tx{goodTx("Alice", 1, "a"), goodTx("Bob", 1, "b")}
 	e.StartHeight(1)
-	if len(env.bcast) != 1 || !env.logged("PROPOSE h=1 r=0") {
-		t.Fatalf("proposer sent %d messages, logs %q", len(env.bcast), env.logs)
+	if proposals(env) != 1 || !env.logged("PROPOSE h=1 r=0") {
+		t.Fatalf("proposer sent %d proposals, logs %q", proposals(env), env.logs)
 	}
 	return e, env.bcast[0].(*types.ProposalMsg).Proposal, env.toPack
 }
@@ -122,8 +133,8 @@ func TestHeaderFirstThenBody(t *testing.T) {
 	if !e.HasBody(bh) || !env.logged("BODY_ACCEPT h=1 r=0 block "+bh.Short()) {
 		t.Fatalf("body not accepted: %q", env.logs)
 	}
-	if len(env.bcast) != 1 { // we can serve the body now: header relayed
-		t.Fatalf("relayed %d proposals, want 1", len(env.bcast))
+	if proposals(env) != 1 { // we can serve the body now: header relayed
+		t.Fatalf("relayed %d proposals, want 1", proposals(env))
 	}
 }
 

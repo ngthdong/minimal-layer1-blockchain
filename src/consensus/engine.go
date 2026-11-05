@@ -65,7 +65,7 @@ type Engine struct {
 	Round  int32
 	Step   Step
 
-	// Locking. -1 = none.
+	// Locking (rules 4 and 5). -1 = none.
 	LockedRound int32
 	LockedHash  types.Hash
 	ValidRound  int32
@@ -124,6 +124,7 @@ func (e *Engine) propose() {
 	e.bodies[bh] = &pending{block: block.Clone(), post: post}
 	e.env.Log(logging.EvPropose, e.Height, e.Round, "block", bh.Short(), "txs", strconv.Itoa(len(block.Txs)))
 	e.env.Broadcast(&types.ProposalMsg{Proposal: p})
+	e.progress()
 }
 
 // OnProposal handles a proposal (header only) received from peer `from`.
@@ -144,7 +145,8 @@ func (e *Engine) OnProposal(from types.NodeID, p *types.Proposal) {
 	e.proposals[p.Round] = *p
 	e.env.Log(logging.EvHeaderAccept, p.Height, p.Round, "block", bh.Short(), "from", node(from))
 	if _, known := e.headers[bh]; known {
-		return // same block re-proposed in a later round: body already requested or known
+		e.progress() // same block re-proposed in a later round: body already requested or known
+		return
 	}
 	e.headers[bh] = p.Header
 	e.env.Send(from, &types.BodyRequest{Height: p.Height, BlockHash: bh})
@@ -164,6 +166,7 @@ func (e *Engine) OnBody(from types.NodeID, b *types.BodyResponse) {
 		e.reject("BODY", b.Height, e.Round, from, err)
 		if !errors.Is(err, ErrBadTxRoot) {
 			e.invalid[b.BlockHash] = true // the block itself is bad, not just this copy
+			e.progress()                  // → prevote NIL
 		}
 		return
 	}
@@ -177,6 +180,7 @@ func (e *Engine) OnBody(from types.NodeID, b *types.BodyResponse) {
 			e.env.Broadcast(&types.ProposalMsg{Proposal: p})
 		}
 	}
+	e.progress()
 }
 
 func (e *Engine) sortedRounds() []int32 {

@@ -69,8 +69,12 @@ func (n *Node) HandleMessage(env types.Envelope) {
 		if n.Engine != nil {
 			n.Engine.OnBody(env.From, m)
 		}
+	case *types.VoteMsg:
+		if n.Engine != nil && n.Engine.OnVote(env.From, &m.Vote) {
+			n.relay(env.From, m) // gossip: peers that missed the original still get it
+		}
 	default:
-		// Votes and sync messages
+		// Sync messages
 	}
 }
 
