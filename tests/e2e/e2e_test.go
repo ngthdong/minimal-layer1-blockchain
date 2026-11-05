@@ -1,0 +1,24 @@
+package e2e
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/ngthdong/minimal-layer1-blockchain/tests/testutil"
+)
+
+// Running the same configuration twice gives byte-identical logs and the
+// same final state hash. It must stay green after every later commit.
+func TestT8Determinism(t *testing.T) {
+	res1, log1 := testutil.Run(t, testutil.LoadConfig(t, "t1_normal"), "T8_run1")
+	res2, log2 := testutil.Run(t, testutil.LoadConfig(t, "t1_normal"), "T8_run2")
+	if len(log1) == 0 {
+		t.Fatal("empty log")
+	}
+	if !bytes.Equal(log1, log2) {
+		t.Fatal("logs are not byte-identical")
+	}
+	if res1.FinalStateHash != res2.FinalStateHash {
+		t.Fatal("final state hashes differ")
+	}
+}
