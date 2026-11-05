@@ -29,7 +29,8 @@ const (
 	EvEquivocation = "EQUIVOCATION"
 	EvReject       = "REJECT"
 	// faults
-	EvCrash = "CRASH"
+	EvCrash     = "CRASH"
+	EvByzantine = "BYZANTINE" // a behaviour starts (from_ms)
 	// run summary
 	EvFinal = "FINAL"
 )

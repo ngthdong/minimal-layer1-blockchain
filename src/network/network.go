@@ -26,6 +26,11 @@ type Rand interface {
 // receiver's own deep copy.
 type Handler func(env types.Envelope)
 
+// Outbound rewrites what a (Byzantine) node sends to one peer: it returns
+// the messages that really go out in place of msg — none, msg itself, a
+// changed copy, or several.
+type Outbound func(to types.NodeID, msg types.Message) []types.Message
+
 type Network struct {
 	cfg      simconfig.NetworkConfig
 	clock    Clock
@@ -33,6 +38,7 @@ type Network struct {
 	log      *logging.Logger
 	handlers map[types.NodeID]Handler
 	down     map[types.NodeID]bool           // crashed nodes: deliveries to them vanish
+	outbound map[types.NodeID]Outbound       // send hooks of Byzantine nodes
 	peers    map[types.NodeID][]types.NodeID // sorted
 }
 
@@ -41,6 +47,7 @@ func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger
 		cfg: cfg, clock: clock, rng: rng, log: log,
 		handlers: make(map[types.NodeID]Handler),
 		down:     make(map[types.NodeID]bool),
+		outbound: make(map[types.NodeID]Outbound),
 		peers:    make(map[types.NodeID][]types.NodeID),
 	}
 }
@@ -57,7 +64,24 @@ func (n *Network) SetPeers(id types.NodeID, peers []types.NodeID) {
 
 func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
 
-// Send transmits msg from one node to another. The message is deep-copied
+// SetOutbound installs the send hook of node id (package byzantine). Every
+// message the node's honest code sends passes through it first.
+func (n *Network) SetOutbound(id types.NodeID, f Outbound) { n.outbound[id] = f }
+
+// Send transmits msg from one node to another, through the sender's
+// Outbound hook if it has one.
+func (n *Network) Send(from, to types.NodeID, msg types.Message) {
+	f := n.outbound[from]
+	if f == nil {
+		n.send(from, to, msg)
+		return
+	}
+	for _, m := range f(to, msg) {
+		n.send(from, to, m)
+	}
+}
+
+// send transmits one message. The message is deep-copied
 // NOW, so the sender may reuse or change its object afterwards.
 //
 // After GST: one delay in [min_delay, Δ], always delivered.
@@ -65,10 +89,10 @@ func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
 // pre_gst.max_delay_ms (which may exceed Δ). Messages sent before GST and
 // lost are NOT re-sent by the network: nodes re-send on timeout.
 //
-// The number of random draws per Send is fixed (1 after GST, 4 before),
+// The number of random draws per message is fixed (1 after GST, 4 before),
 // whatever the outcome, so changing a probability in the config does not
 // shift the delays of every later message.
-func (n *Network) Send(from, to types.NodeID, msg types.Message) {
+func (n *Network) send(from, to types.NodeID, msg types.Message) {
 	env := types.Envelope{From: from, To: to, Msg: msg.Clone()}
 	now := n.clock.Now()
 	if now >= n.cfg.GSTMs {

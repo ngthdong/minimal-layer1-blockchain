@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/byzantine"
 	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
 	"github.com/ngthdong/minimal-layer1-blockchain/crypto"
 	"github.com/ngthdong/minimal-layer1-blockchain/logging"
@@ -74,21 +75,37 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 		}
 	}
 
-	// Faults, scheduled before anything else so that a crash at time t comes
-	// first among the events of t (from_ms = 0: the node never starts).
+	// Faults, scheduled before anything else so that a fault at time t comes
+	// first among the events of t (crash at from_ms = 0: never starts).
+	byzFrom := map[types.NodeID]uint64{} // when each send hook turns on
 	for _, b := range cfg.Byzantine {
-		switch b.Behavior {
-		case "crash":
-			sched.At(b.FromMs, res.Nodes[b.Node].Crash)
-		default:
-			return nil, fmt.Errorf("byzantine behavior %q is not implemented", b.Behavior)
+		nd, spec := res.Nodes[b.Node], b
+		if b.Behavior == "crash" {
+			sched.At(b.FromMs, nd.Crash)
+			continue
 		}
+		beh, err := byzantine.New(b.Behavior)
+		if err != nil {
+			return nil, err
+		}
+		net.SetOutbound(nd.ID, byzantine.Hook(beh, b.FromMs, sched.Now))
+		if _, honest := beh.(byzantine.Honest); !honest { // clients cannot tell it from an honest node
+			byzFrom[nd.ID] = b.FromMs
+		}
+		sched.At(b.FromMs, func() {
+			log.Log(spec.Node, logging.EvByzantine, 0, 0, "behavior", spec.Behavior)
+		})
 	}
 
 	// Client workload: every submission is an event at its planned time.
+	// Clients avoid nodes that are down or already Byzantine (see submit).
+	usable := func(nd *node.Node) bool {
+		from, byz := byzFrom[nd.ID]
+		return !nd.Crashed() && !(byz && sched.Now() >= from)
+	}
 	for _, s := range workload.Plan(cfg, accounts, NewRNG(cfg.Seed, "workload")) {
 		to, tx := s.To, s.Tx
-		sched.At(s.AtMs, func() { submit(res.Nodes, to, tx) })
+		sched.At(s.AtMs, func() { submit(res.Nodes, usable, to, tx) })
 	}
 
 	// Every node starts height 1 at time 0, in NodeID order.
@@ -109,13 +126,15 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 	return res, log.Flush()
 }
 
-// submit hands tx to node `to` or, like a client whose server does not
-// answer, to the next node (in NodeID order) that is still up. Otherwise a
-// tx lost on a crashed node leaves a nonce gap, and every later tx of that
-// account would wait forever.
-func submit(nodes []*node.Node, to types.NodeID, tx types.Tx) {
+// submit hands tx to node `to` or, if that node is not usable, to the next
+// usable node in NodeID order. A tx left with a crashed node, or swallowed
+// by a Byzantine one, leaves a nonce gap: every later tx of that account
+// would wait forever. Real clients notice (no answer, tx never included)
+// and resend elsewhere; the simulation gives that outcome directly, so the
+// fault scenarios test consensus, not one account's stalled workload.
+func submit(nodes []*node.Node, usable func(*node.Node) bool, to types.NodeID, tx types.Tx) {
 	for i := range nodes {
-		if nd := nodes[(int(to)+i)%len(nodes)]; !nd.Crashed() {
+		if nd := nodes[(int(to)+i)%len(nodes)]; usable(nd) {
 			nd.SubmitTx(tx)
 			return
 		}
