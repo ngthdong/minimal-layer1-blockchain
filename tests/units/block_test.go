@@ -116,3 +116,14 @@ func TestBlockHashEqualsHeaderHash(t *testing.T) {
 		t.Fatal("Block.Hash must be the header hash")
 	}
 }
+
+// The root covers signatures: a body with one signature byte changed no
+// longer matches the header.
+func TestTxRootCoversSignatures(t *testing.T) {
+	a := goodTx("Alice", 1, "a")
+	b := a.Clone()
+	b.Sig[0] ^= 1
+	if types.TxRoot([]types.Tx{a}) == types.TxRoot([]types.Tx{b}) {
+		t.Fatal("TxRoot must change when a signature changes")
+	}
+}

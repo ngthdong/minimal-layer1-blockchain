@@ -63,16 +63,22 @@ func (b *Block) Hash() Hash {
 	return b.Header.Hash()
 }
 
-// TxRoot commits to the transactions in order
+// TxRoot commits to the transactions IN ORDER, signatures included:
 //
-//	H(tag || count || txHash_1 || ... || txHash_k)
+//	H(tag || count || (signingBytes_1, sig_1) || ... || (signingBytes_k, sig_k))
+//
+// The signatures must be in it. Otherwise a relaying peer could flip one
+// signature byte in the body of a GOOD block: the copy would still match the
+// header's TxRoot, fail with bad_signature, and honest nodes would mark the
+// block itself invalid. With them, any change to a body is bad_tx_root:
+// only that copy is refused, and a body that matches the root IS the block.
+// (Tx.Hash, the tx's identity in the mempool, stays signature-free.)
 //
 // An empty block has a well-defined root (count = 0).
 func TxRoot(txs []Tx) Hash {
 	w := encoding.NewWriter().U32(uint32(len(txs)))
 	for i := range txs {
-		h := txs[i].Hash()
-		w.Fixed(h[:])
+		w.Bytes(txs[i].SigningBytes()).Bytes(txs[i].Sig)
 	}
 	return taggedHash(tagTxRoot, w.Out())
 }

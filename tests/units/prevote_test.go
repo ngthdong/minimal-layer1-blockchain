@@ -139,3 +139,23 @@ func TestForgedVoteIsRejected(t *testing.T) {
 		t.Fatalf("logs = %q", env.logs)
 	}
 }
+
+// A peer that tampers with a tx signature in the body of a good block only
+// gets ITS copy refused (bad_tx_root): the block is not marked invalid, and
+// the real body from another peer is still accepted and prevoted.
+func TestTamperedBodyDoesNotCondemnTheBlock(t *testing.T) {
+	_, p, txs := proposerEngine(t)
+	e, env := newEngine(t, 0)
+	e.StartHeight(1)
+	e.OnProposal(p.Proposer, &p)
+	bad := types.BodyResponse{Height: 1, BlockHash: p.BlockHash(), Txs: []types.Tx{txs[0].Clone(), txs[1]}}
+	bad.Txs[0].Sig[5] ^= 1
+	e.OnBody(7, &bad)
+	if !env.logged("REJECT h=1 r=0 type BODY from 07 reason bad_tx_root") || count(env, "PREVOTE") != 0 {
+		t.Fatalf("logs = %q", env.logs)
+	}
+	e.OnBody(p.Proposer, &types.BodyResponse{Height: 1, BlockHash: p.BlockHash(), Txs: txs})
+	if !env.logged("PREVOTE h=1 r=0 block " + p.BlockHash().Short()) {
+		t.Fatalf("the good body was not accepted: %q", env.logs)
+	}
+}
