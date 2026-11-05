@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
+	"github.com/ngthdong/minimal-layer1-blockchain/state"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
@@ -17,6 +18,47 @@ func certAt(h uint64, bh types.Hash, ids ...types.NodeID) types.CommitCert {
 }
 
 func certFor(bh types.Hash, ids ...types.NodeID) types.CommitCert { return certAt(1, bh, ids...) }
+
+// finalChain returns n consecutive finalized blocks (one Alice tx each) as
+// the SyncResponses a peer would send.
+func finalChain(n int) []types.SyncResponse {
+	st, parent := state.New(), types.ZeroHash
+	var out []types.SyncResponse
+	for h := uint64(1); h <= uint64(n); h++ {
+		txs := []types.Tx{goodTx("Alice", h, "v")}
+		if err := st.ApplyBlock(chain, registry(), txs); err != nil {
+			panic(err)
+		}
+		hdr := types.BlockHeader{ChainID: chain, Height: h, ParentHash: parent,
+			TxRoot: types.TxRoot(txs), StateHash: st.Hash()}
+		consensus.NewVoteSigner(1, vPrivs[1], chain).SignHeader(&hdr)
+		parent = hdr.Hash()
+		out = append(out, types.SyncResponse{Block: types.Block{Header: hdr, Txs: txs},
+			Cert: certAt(h, parent, 1, 2, 3, 4, 5, 6, 7)})
+	}
+	return out
+}
+
+// The network reorders sync answers: blocks that arrive early wait for the
+// missing one, then all are committed in height order.
+func TestSyncAnswersOutOfOrder(t *testing.T) {
+	_, nodes, _ := nodeNet(2, 0)
+	nd := nodes[0]
+	nd.Engine = consensus.NewEngine(0, chain, vset(t), consensus.NewVoteSigner(0, vPrivs[0], chain),
+		testConsensusConfig, nd)
+	nd.Engine.StartHeight(1)
+	blocks := finalChain(3)
+	for _, i := range []int{2, 1} {
+		nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &blocks[i]})
+	}
+	if nd.Ledger.Height() != 0 {
+		t.Fatal("committed a block before its parent")
+	}
+	nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &blocks[0]})
+	if nd.Ledger.Height() != 3 || nd.Engine.Height != 4 {
+		t.Fatalf("ledger %d, engine at %d: want 3 and 4", nd.Ledger.Height(), nd.Engine.Height)
+	}
+}
 
 // A synced block is committed only with a real certificate for exactly that
 // block, and only if its body executes to the header's state hash.
