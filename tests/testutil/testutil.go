@@ -60,3 +60,8 @@ func Run(t *testing.T, cfg *simconfig.Config, logName string) (*sim.Result, []by
 	}
 	return res, buf.Bytes()
 }
+
+// CountLines counts log lines that contain substr.
+func CountLines(log []byte, substr string) int {
+	return bytes.Count(log, []byte(substr))
+}

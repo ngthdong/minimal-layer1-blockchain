@@ -5,6 +5,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
 	"github.com/ngthdong/minimal-layer1-blockchain/crypto"
 	"github.com/ngthdong/minimal-layer1-blockchain/logging"
 	"github.com/ngthdong/minimal-layer1-blockchain/network"
@@ -39,6 +40,22 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 	reg := workload.Registry(accounts)
 
 	res := &Result{Validators: make([]crypto.PublicKey, cfg.NumValidators)}
+	privs := make([]crypto.PrivateKey, cfg.NumValidators)
+	for i := range privs {
+		res.Validators[i], privs[i] = crypto.KeyFromSeed(cfg.Seed, fmt.Sprintf("validator/%d", i))
+	}
+	vals, err := consensus.NewValidatorSet(res.Validators)
+	if err != nil {
+		return nil, err
+	}
+	ccfg := consensus.Config{
+		TimeoutProposeMs:   cfg.Consensus.TimeoutProposeMs,
+		TimeoutPrevoteMs:   cfg.Consensus.TimeoutPrevoteMs,
+		TimeoutPrecommitMs: cfg.Consensus.TimeoutPrecommitMs,
+		TimeoutDeltaMs:     cfg.Consensus.TimeoutDeltaMs,
+		MaxBlockTxs:        cfg.Consensus.MaxBlockTxs,
+	}
+
 	byz := make(map[int]bool, len(cfg.Byzantine))
 	for _, b := range cfg.Byzantine {
 		byz[b.Node] = true
@@ -46,8 +63,9 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 	mesh := network.FullMesh(cfg.NumValidators)
 	for i := 0; i < cfg.NumValidators; i++ {
 		id := types.NodeID(i)
-		res.Validators[i], _ = crypto.KeyFromSeed(cfg.Seed, fmt.Sprintf("validator/%d", i))
 		nd := node.New(id, cfg.ChainID, reg, net, log)
+		signer := consensus.NewVoteSigner(id, privs[i], cfg.ChainID)
+		nd.Engine = consensus.NewEngine(id, cfg.ChainID, vals, signer, ccfg, nd)
 		net.Register(id, nd.HandleMessage)
 		net.SetPeers(id, mesh[id])
 		res.Nodes = append(res.Nodes, nd)
@@ -62,10 +80,16 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 		sched.At(s.AtMs, func() { nd.SubmitTx(tx) })
 	}
 
+	// Every node starts height 1 at time 0, in NodeID order.
+	for _, nd := range res.Nodes {
+		e := nd.Engine
+		sched.At(0, func() { e.StartHeight(1) })
+	}
+
 	sched.Run(cfg.MaxTimeMs, nil)
 	res.EndTimeMs = sched.Now()
 
-	// No consensus yet: nothing is finalized, so every honest node
+	// Nothing is finalized yet, so every honest node
 	// trivially agrees on the empty chain.
 	res.Agreed = true
 	if len(res.Honest) > 0 {

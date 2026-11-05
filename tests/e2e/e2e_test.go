@@ -33,3 +33,19 @@ func TestWorkloadReachesEveryMempool(t *testing.T) {
 		}
 	}
 }
+
+// Header-first flow: every non-proposer accepts the header of height 1,
+// then fetches and accepts its body; nobody rejects anything.
+func TestProposalHeaderThenBodyReachesEveryNode(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t1_normal")
+	_, log := testutil.Run(t, cfg, "proposal_flow")
+	want := cfg.NumValidators - 1
+	for _, ev := range []string{"ev=HEADER_ACCEPT h=1 r=0", "ev=BODY_ACCEPT   h=1 r=0"} {
+		if got := testutil.CountLines(log, ev); got != want {
+			t.Fatalf("%q appears %d times, want %d", ev, got, want)
+		}
+	}
+	if testutil.CountLines(log, "ev=REJECT") != 0 || testutil.CountLines(log, "ev=PROPOSE ") != 1 {
+		t.Fatal("expected exactly one proposal and no rejection")
+	}
+}

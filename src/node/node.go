@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
 	"github.com/ngthdong/minimal-layer1-blockchain/ledger"
 	"github.com/ngthdong/minimal-layer1-blockchain/logging"
 	"github.com/ngthdong/minimal-layer1-blockchain/mempool"
@@ -22,6 +23,7 @@ type Node struct {
 	State   *state.State
 	Ledger  *ledger.Ledger
 	Mempool *mempool.Mempool
+	Engine  *consensus.Engine // set by the runner; nil in mempool-only tests
 
 	seen map[types.Hash]struct{} // message IDs already handled (gossip dedup)
 }
@@ -34,18 +36,51 @@ func New(id types.NodeID, chainID string, reg state.Registry, net *network.Netwo
 	}
 }
 
+// HandleMessage is the node's network handler (network.Register).
+//
+// Gossiped messages (tx, proposal, vote) are handled at most once: a copy
+// that arrives again — from another peer, or duplicated by the network (T2)
+// — is ignored. Their IDs include the signature, so a forged copy has its
+// own ID and can never hide the real message.
+//
+// Point-to-point messages (body request/response) are NOT de-duplicated by
+// ID: two peers asking us for the same body send identical requests, and
+// both must be answered.
 func (n *Node) HandleMessage(env types.Envelope) {
-	id := env.Msg.ID()
-	if _, dup := n.seen[id]; dup {
-		return
+	switch env.Msg.Kind() {
+	case types.MsgTx, types.MsgProposal, types.MsgVote:
+		id := env.Msg.ID()
+		if _, dup := n.seen[id]; dup {
+			return
+		}
+		n.seen[id] = struct{}{}
 	}
-	n.seen[id] = struct{}{}
 
 	switch m := env.Msg.(type) {
 	case *types.TxMsg:
 		n.onTx(env.From, m)
+	case *types.ProposalMsg:
+		if n.Engine != nil {
+			n.Engine.OnProposal(env.From, &m.Proposal)
+		}
+	case *types.BodyRequest:
+		n.onBodyRequest(env.From, m)
+	case *types.BodyResponse:
+		if n.Engine != nil {
+			n.Engine.OnBody(env.From, m)
+		}
 	default:
-		// Proposals, votes, bodies and sync messages: consensus.
+		// Votes and sync messages
+	}
+}
+
+// onBodyRequest answers only with a body we have checked ourselves.
+func (n *Node) onBodyRequest(from types.NodeID, req *types.BodyRequest) {
+	if n.Engine == nil {
+		return
+	}
+	if txs, ok := n.Engine.Body(req.Height, req.BlockHash); ok {
+		n.net.Send(n.ID, from, &types.BodyResponse{Height: req.Height, BlockHash: req.BlockHash, Txs: txs})
 	}
 }
 
