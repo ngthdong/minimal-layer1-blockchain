@@ -17,7 +17,7 @@ var (
 )
 
 // NoncePrefix is where each sender's last used nonce is stored:
-// "sys/nonce/<Sender>". The owner "sys" is not a valid account (stage 8), so
+// "sys/nonce/<Sender>". The owner "sys" is not a valid account, so
 // no transaction can write these keys, yet they are part of the state hash.
 const NoncePrefix = "sys/nonce/"
 

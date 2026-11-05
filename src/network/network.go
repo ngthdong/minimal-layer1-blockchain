@@ -61,7 +61,7 @@ func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
 // After GST: one delay in [min_delay, Δ], always delivered.
 // Before GST: the message may be dropped, duplicated, and delayed up to
 // pre_gst.max_delay_ms (which may exceed Δ). Messages sent before GST and
-// lost are NOT re-sent by the network: nodes re-send on timeout (stage 29).
+// lost are NOT re-sent by the network: nodes re-send on timeout.
 //
 // The number of random draws per Send is fixed (1 after GST, 4 before),
 // whatever the outcome, so changing a probability in the config does not

@@ -49,10 +49,12 @@ func (n *Node) HandleMessage(env types.Envelope) {
 	}
 }
 
-// SubmitTx is how a client hands a transaction to this node.
+// SubmitTx is how a client hands a transaction to this node (workload).
+// It is logged as RECV from=client, so every tx's entry point is in the log.
 func (n *Node) SubmitTx(tx types.Tx) {
-	m := &types.TxMsg{Tx: tx}
+	m := &types.TxMsg{Tx: tx.Clone()} // never share memory with the client
 	id := m.ID()
+	n.log.Log(int(n.ID), logging.EvRecv, 0, 0, "type", "TX", "id", id.Short(), "from", "client")
 	if _, dup := n.seen[id]; dup {
 		return
 	}

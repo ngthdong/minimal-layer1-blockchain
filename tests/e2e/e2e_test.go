@@ -22,3 +22,14 @@ func TestT8Determinism(t *testing.T) {
 		t.Fatal("final state hashes differ")
 	}
 }
+
+// Workload + gossip: every client tx reaches every node's mempool.
+func TestWorkloadReachesEveryMempool(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t1_normal")
+	res, _ := testutil.Run(t, cfg, "workload")
+	for _, nd := range res.Nodes {
+		if nd.Mempool.Size() != cfg.Workload.TxCount {
+			t.Fatalf("node %d has %d txs, want %d", nd.ID, nd.Mempool.Size(), cfg.Workload.TxCount)
+		}
+	}
+}
