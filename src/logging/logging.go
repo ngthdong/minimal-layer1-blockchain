@@ -13,6 +13,7 @@ const (
 	EvRecv    = "RECV"
 	EvDrop    = "DROP"
 	EvDup     = "DUP"
+	EvDelay   = "DELAY" // held back by the outbound rate limit
 	EvBlock   = "BLOCK"
 	EvUnblock = "UNBLOCK"
 	// consensus

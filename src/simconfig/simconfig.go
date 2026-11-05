@@ -40,7 +40,7 @@ type PreGSTConfig struct {
 }
 
 type RateLimit struct {
-	Capacity    int `json:"capacity"`      // token bucket size per outbound link
+	Capacity    int `json:"capacity"`      // token bucket size per outbound link (0 = no limit)
 	RefillPerMs int `json:"refill_per_ms"` // tokens added per virtual ms
 	QueueLimit  int `json:"queue_limit"`   // queued messages before DROP reason=rate
 }
@@ -126,6 +126,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("topology must be \"full\" or \"file\"")
 	case nw.Topology == "file" && nw.TopologyFile == "":
 		return fmt.Errorf("topology \"file\" needs topology_file")
+	case nw.RateLimit.Capacity < 0 || nw.RateLimit.QueueLimit < 0 ||
+		(nw.RateLimit.Capacity > 0 && nw.RateLimit.RefillPerMs <= 0):
+		return fmt.Errorf("rate_limit: capacity and queue_limit must be >= 0, refill_per_ms > 0 (capacity 0 = no limit)")
 	case cs.TimeoutProposeMs == 0 || cs.TimeoutPrevoteMs == 0 || cs.TimeoutPrecommitMs == 0:
 		return fmt.Errorf("consensus timeouts must be > 0")
 	case cs.MaxBlockTxs <= 0:

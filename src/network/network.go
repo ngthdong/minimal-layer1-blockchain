@@ -39,6 +39,7 @@ type Network struct {
 	handlers map[types.NodeID]Handler
 	down     map[types.NodeID]bool           // crashed nodes: deliveries to them vanish
 	outbound map[types.NodeID]Outbound       // send hooks of Byzantine nodes
+	links    map[linkKey]*link               // rate limiter state per (from, to)
 	peers    map[types.NodeID][]types.NodeID // sorted
 }
 
@@ -48,6 +49,7 @@ func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger
 		handlers: make(map[types.NodeID]Handler),
 		down:     make(map[types.NodeID]bool),
 		outbound: make(map[types.NodeID]Outbound),
+		links:    make(map[linkKey]*link),
 		peers:    make(map[types.NodeID][]types.NodeID),
 	}
 }
@@ -81,8 +83,9 @@ func (n *Network) Send(from, to types.NodeID, msg types.Message) {
 	}
 }
 
-// send transmits one message. The message is deep-copied
-// NOW, so the sender may reuse or change its object afterwards.
+// transmit puts one message on the wire (after the rate limiter let it go).
+// The message is deep-copied NOW, so the sender may reuse or change its
+// object afterwards.
 //
 // After GST: one delay in [min_delay, Δ], always delivered.
 // Before GST: the message may be dropped, duplicated, and delayed up to
@@ -92,7 +95,7 @@ func (n *Network) Send(from, to types.NodeID, msg types.Message) {
 // The number of random draws per message is fixed (1 after GST, 4 before),
 // whatever the outcome, so changing a probability in the config does not
 // shift the delays of every later message.
-func (n *Network) send(from, to types.NodeID, msg types.Message) {
+func (n *Network) transmit(from, to types.NodeID, msg types.Message) {
 	env := types.Envelope{From: from, To: to, Msg: msg.Clone()}
 	now := n.clock.Now()
 	if now >= n.cfg.GSTMs {
