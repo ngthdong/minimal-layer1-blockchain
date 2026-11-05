@@ -1,6 +1,8 @@
 package consensus
 
 import (
+	"strconv"
+
 	"github.com/ngthdong/minimal-layer1-blockchain/logging"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
@@ -39,6 +41,7 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 func (e *Engine) progress() {
 	e.tryPrevote()
 	e.checkPrevoteQuorum()
+	e.checkCommit() // last: it may start the next height
 }
 
 // tryPrevote: rule 3 (prevote only valid blocks) and rule 5 (respect the lock).
@@ -97,4 +100,31 @@ func (e *Engine) checkPrevoteQuorum() {
 		}
 	}
 	// 2f+1 for a block whose body we lack: wait for the body (OnBody calls progress).
+}
+
+// checkCommit: 2f+1 precommits for a block B in ANY round of this height
+// decide the height (the round we are in does not matter: a slow node may
+// still be in an earlier round). With B's body at hand we build the
+// certificate, commit and move to the next height.
+func (e *Engine) checkCommit() {
+	for _, r := range e.Votes.Rounds(e.Height, types.Precommit) {
+		key := VoteKey{Height: e.Height, Round: r, Type: types.Precommit}
+		bh, ok := e.Votes.Majority(key, e.vals.Quorum())
+		if !ok || bh.IsZero() {
+			continue
+		}
+		p := e.bodies[bh]
+		if p == nil {
+			return // decided, but we lack the body: wait for it (or sync)
+		}
+		cert := types.CommitCert{Height: e.Height, Round: r, BlockHash: bh, Precommits: e.Votes.VotesFor(key, bh)}
+		if err := e.env.Commit(p.block.Clone(), cert, p.post); err != nil {
+			e.env.Log(logging.EvReject, e.Height, r, "type", "COMMIT", "block", bh.Short(), "reason", err.Error())
+			return // our own ledger refuses: a safety alarm, never move on silently
+		}
+		e.env.Log(logging.EvCommit, e.Height, r, "block", bh.Short(),
+			"txs", strconv.Itoa(len(p.block.Txs)), "state", p.post.Hash().Short())
+		e.StartHeight(e.Height + 1)
+		return
+	}
 }

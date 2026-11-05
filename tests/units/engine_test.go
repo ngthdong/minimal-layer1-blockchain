@@ -25,6 +25,9 @@ type fakeEnv struct {
 	sent   []sentTo
 	st     *state.State
 	toPack []types.Tx // what BuildBlock puts in the next block
+
+	commits   []types.CommitCert // what Commit received
+	commitErr error              // if set, Commit refuses
 }
 
 func newFakeEnv() *fakeEnv { return &fakeEnv{st: state.New()} }
@@ -46,6 +49,14 @@ func (f *fakeEnv) BuildBlock(h uint64, parent types.Hash, max int) (types.Block,
 }
 func (f *fakeEnv) ExecuteBody(hdr *types.BlockHeader, txs []types.Tx, max int) (*state.State, error) {
 	return consensus.ExecuteBody(chain, registry(), f.st, hdr, txs, max)
+}
+func (f *fakeEnv) Commit(b types.Block, cert types.CommitCert, post *state.State) error {
+	if f.commitErr != nil {
+		return f.commitErr
+	}
+	f.commits = append(f.commits, cert)
+	f.st = post
+	return nil
 }
 
 // proposals counts the proposals broadcast (votes are broadcast too).

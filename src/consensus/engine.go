@@ -43,6 +43,9 @@ type Env interface {
 	BuildBlock(height uint64, parent types.Hash, maxTxs int) (types.Block, *state.State)
 	// ExecuteBody runs consensus.ExecuteBody against the node's state.
 	ExecuteBody(hdr *types.BlockHeader, txs []types.Tx, maxTxs int) (*state.State, error)
+	// Commit finalizes block: appends it with its certificate to the ledger,
+	// installs post as the node's state and cleans the mempool.
+	Commit(block types.Block, cert types.CommitCert, post *state.State) error
 }
 
 // pending is a block of the current height whose body was checked.

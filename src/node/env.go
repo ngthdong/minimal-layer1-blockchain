@@ -2,6 +2,7 @@ package node
 
 import (
 	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
+	"github.com/ngthdong/minimal-layer1-blockchain/ledger"
 	"github.com/ngthdong/minimal-layer1-blockchain/state"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
@@ -37,4 +38,16 @@ func (n *Node) BuildBlock(height uint64, parent types.Hash, maxTxs int) (types.B
 // ExecuteBody checks a received body against the node's current state.
 func (n *Node) ExecuteBody(hdr *types.BlockHeader, txs []types.Tx, maxTxs int) (*state.State, error) {
 	return consensus.ExecuteBody(n.chainID, n.reg, n.State, hdr, txs, maxTxs)
+}
+
+// Commit finalizes a block. Order matters: the ledger first (it may refuse a
+// conflicting block, and then nothing else changes), then the state computed
+// when the body was checked, then the mempool, using the NEW nonces.
+func (n *Node) Commit(block types.Block, cert types.CommitCert, post *state.State) error {
+	if err := n.Ledger.Append(ledger.Entry{Block: block, Cert: cert}); err != nil {
+		return err
+	}
+	n.State = post
+	n.Mempool.RemoveCommitted(block.Txs, n.State.Nonce)
+	return nil
 }

@@ -132,3 +132,16 @@ func (vs *VoteSet) Equivocators(key VoteKey) []types.NodeID {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// Rounds returns, ascending, the rounds of height h that hold at least one
+// vote of type typ.
+func (vs *VoteSet) Rounds(h uint64, typ types.VoteType) []int32 {
+	var out []int32
+	for k := range vs.votes {
+		if k.Height == h && k.Type == typ {
+			out = append(out, k.Round)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}

@@ -23,13 +23,20 @@ func TestT8Determinism(t *testing.T) {
 	}
 }
 
-// Workload + gossip: every client tx reaches every node's mempool.
-func TestWorkloadReachesEveryMempool(t *testing.T) {
+// Workload + gossip: every client tx reaches every node, where it is either
+// already committed or still waiting in the mempool.
+func TestWorkloadReachesEveryNode(t *testing.T) {
 	cfg := testutil.LoadConfig(t, "t1_normal")
 	res, _ := testutil.Run(t, cfg, "workload")
 	for _, nd := range res.Nodes {
-		if nd.Mempool.Size() != cfg.Workload.TxCount {
-			t.Fatalf("node %d has %d txs, want %d", nd.ID, nd.Mempool.Size(), cfg.Workload.TxCount)
+		committed := 0
+		for h := uint64(1); h <= nd.Ledger.Height(); h++ {
+			e, _ := nd.Ledger.Get(h)
+			committed += len(e.Block.Txs)
+		}
+		if committed+nd.Mempool.Size() != cfg.Workload.TxCount {
+			t.Fatalf("node %d: %d committed + %d pending, want %d",
+				nd.ID, committed, nd.Mempool.Size(), cfg.Workload.TxCount)
 		}
 	}
 }
@@ -45,8 +52,8 @@ func TestProposalHeaderThenBodyReachesEveryNode(t *testing.T) {
 			t.Fatalf("%q appears %d times, want %d", ev, got, want)
 		}
 	}
-	if testutil.CountLines(log, "ev=REJECT") != 0 || testutil.CountLines(log, "ev=PROPOSE ") != 1 {
-		t.Fatal("expected exactly one proposal and no rejection")
+	if testutil.CountLines(log, "ev=REJECT") != 0 || testutil.CountLines(log, "ev=PROPOSE       h=1 r=0") != 1 {
+		t.Fatal("expected exactly one proposal at height 1 and no rejection")
 	}
 }
 
@@ -62,5 +69,26 @@ func TestEveryNodePrevotesLocksAndPrecommits(t *testing.T) {
 	}
 	if testutil.CountLines(log, "block=nil") != 0 {
 		t.Fatal("nobody should vote NIL in a normal run")
+	}
+}
+
+// Blocks are finalized and every honest node that finalized a height has the
+// same block there (safety). T1 itself (all nodes reach max_height) needs the
+// buffering of messages for the next height.
+func TestCommitsAreConsistent(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t1_normal")
+	res, _ := testutil.Run(t, cfg, "commits")
+	if !res.Agreed {
+		t.Fatal("SAFETY VIOLATION: two honest nodes finalized different blocks")
+	}
+	for _, id := range res.Honest {
+		nd := res.Nodes[id]
+		if nd.Ledger.Height() < 1 {
+			t.Fatalf("node %d finalized nothing", id)
+		}
+		e, _ := nd.Ledger.Get(nd.Ledger.Height())
+		if nd.State.Hash() != e.Block.Header.StateHash {
+			t.Fatalf("node %d state does not match its last block", id)
+		}
 	}
 }
