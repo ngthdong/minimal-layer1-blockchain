@@ -74,16 +74,26 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 		}
 	}
 
+	// Faults, scheduled before anything else so that a crash at time t comes
+	// first among the events of t (from_ms = 0: the node never starts).
+	for _, b := range cfg.Byzantine {
+		switch b.Behavior {
+		case "crash":
+			sched.At(b.FromMs, res.Nodes[b.Node].Crash)
+		default:
+			return nil, fmt.Errorf("byzantine behavior %q is not implemented", b.Behavior)
+		}
+	}
+
 	// Client workload: every submission is an event at its planned time.
 	for _, s := range workload.Plan(cfg, accounts, NewRNG(cfg.Seed, "workload")) {
-		nd, tx := res.Nodes[s.To], s.Tx
-		sched.At(s.AtMs, func() { nd.SubmitTx(tx) })
+		to, tx := s.To, s.Tx
+		sched.At(s.AtMs, func() { submit(res.Nodes, to, tx) })
 	}
 
 	// Every node starts height 1 at time 0, in NodeID order.
 	for _, nd := range res.Nodes {
-		e := nd.Engine
-		sched.At(0, func() { e.StartHeight(1) })
+		sched.At(0, nd.Start)
 	}
 
 	sched.Run(cfg.MaxTimeMs, func() bool { return allReached(res, cfg.MaxHeight) })
@@ -97,6 +107,19 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 			"mempool", strconv.Itoa(nd.Mempool.Size()))
 	}
 	return res, log.Flush()
+}
+
+// submit hands tx to node `to` or, like a client whose server does not
+// answer, to the next node (in NodeID order) that is still up. Otherwise a
+// tx lost on a crashed node leaves a nonce gap, and every later tx of that
+// account would wait forever.
+func submit(nodes []*node.Node, to types.NodeID, tx types.Tx) {
+	for i := range nodes {
+		if nd := nodes[(int(to)+i)%len(nodes)]; !nd.Crashed() {
+			nd.SubmitTx(tx)
+			return
+		}
+	}
 }
 
 // allReached reports whether every honest node finalized at least height h.

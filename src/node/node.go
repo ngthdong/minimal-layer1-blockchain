@@ -26,7 +26,8 @@ type Node struct {
 	Mempool *mempool.Mempool
 	Engine  *consensus.Engine // set by the runner; nil in mempool-only tests
 
-	seen map[types.Hash]struct{} // message IDs already handled (gossip dedup)
+	seen    map[types.Hash]struct{} // message IDs already handled (gossip dedup)
+	crashed bool                    // stopped for good (Crash)
 }
 
 func New(id types.NodeID, chainID string, reg state.Registry, net *network.Network,
@@ -49,6 +50,9 @@ func New(id types.NodeID, chainID string, reg state.Registry, net *network.Netwo
 // ID: two peers asking us for the same body send identical requests, and
 // both must be answered.
 func (n *Node) HandleMessage(env types.Envelope) {
+	if n.crashed {
+		return
+	}
 	switch env.Msg.Kind() {
 	case types.MsgTx, types.MsgProposal, types.MsgVote:
 		id := env.Msg.ID()
@@ -101,6 +105,9 @@ func (n *Node) onBodyRequest(from types.NodeID, req *types.BodyRequest) {
 // SubmitTx is how a client hands a transaction to this node (workload).
 // It is logged as RECV from=client, so every tx's entry point is in the log.
 func (n *Node) SubmitTx(tx types.Tx) {
+	if n.crashed {
+		return // the client's tx is lost, as with a real dead server
+	}
 	m := &types.TxMsg{Tx: tx.Clone()} // never share memory with the client
 	id := m.ID()
 	n.log.Log(int(n.ID), logging.EvRecv, 0, 0, "type", "TX", "id", id.Short(), "from", "client")

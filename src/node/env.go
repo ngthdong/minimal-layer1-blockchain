@@ -54,5 +54,9 @@ func (n *Node) Commit(block types.Block, cert types.CommitCert, post *state.Stat
 
 // ScheduleTimeout fires the engine timer t after afterMs of virtual time.
 func (n *Node) ScheduleTimeout(afterMs uint64, t consensus.Timeout) {
-	n.clock.At(n.clock.Now()+afterMs, func() { n.Engine.OnTimeout(t) })
+	n.clock.At(n.clock.Now()+afterMs, func() {
+		if !n.crashed { // a dead node's timers fire into the void
+			n.Engine.OnTimeout(t)
+		}
+	})
 }

@@ -28,6 +28,8 @@ const (
 	EvCommit       = "COMMIT"
 	EvEquivocation = "EQUIVOCATION"
 	EvReject       = "REJECT"
+	// faults
+	EvCrash = "CRASH"
 	// run summary
 	EvFinal = "FINAL"
 )

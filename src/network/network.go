@@ -32,6 +32,7 @@ type Network struct {
 	rng      Rand
 	log      *logging.Logger
 	handlers map[types.NodeID]Handler
+	down     map[types.NodeID]bool           // crashed nodes: deliveries to them vanish
 	peers    map[types.NodeID][]types.NodeID // sorted
 }
 
@@ -39,6 +40,7 @@ func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger
 	return &Network{
 		cfg: cfg, clock: clock, rng: rng, log: log,
 		handlers: make(map[types.NodeID]Handler),
+		down:     make(map[types.NodeID]bool),
 		peers:    make(map[types.NodeID][]types.NodeID),
 	}
 }
@@ -105,7 +107,14 @@ func (n *Network) Broadcast(from types.NodeID, msg types.Message) {
 	}
 }
 
+// Down marks node id as crashed: messages still in flight to it, and any sent
+// later, are discarded on arrival without a RECV line.
+func (n *Network) Down(id types.NodeID) { n.down[id] = true }
+
 func (n *Network) deliver(env types.Envelope) {
+	if n.down[env.To] {
+		return
+	}
 	h, ok := n.handlers[env.To]
 	if !ok {
 		n.logEvent(int(env.To), logging.EvDrop, env, "from", node(env.From), "reason", "unknown_peer")
