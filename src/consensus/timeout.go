@@ -5,6 +5,10 @@ import (
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
+// StepRebroadcast is not a step of a round: it names the timer that sends
+// our own votes again while a round makes no progress.
+const StepRebroadcast Step = 100
+
 // Timeout is a timer the engine asks its environment to fire later.
 type Timeout struct {
 	Height uint64
@@ -20,6 +24,8 @@ func (s Step) String() string {
 		return "prevote"
 	case StepPrecommit:
 		return "precommit"
+	case StepRebroadcast:
+		return "rebroadcast"
 	}
 	return "unknown"
 }
@@ -41,22 +47,34 @@ func (e *Engine) schedule(step Step, base uint64) {
 	e.env.ScheduleTimeout(e.timeout(base), t)
 }
 
-// OnTimeout is called when a timer fires. A timer for a height, round or
-// step we have already left is stale and ignored. Otherwise:
+// OnTimeout is called when a timer fires. A timer for a height or round we
+// have already left is stale and ignored. Otherwise:
 //
-//	propose   → no usable proposal in time: prevote NIL
-//	prevote   → 2f+1 prevotes but no quorum for one value: precommit NIL
-//	precommit → 2f+1 precommits but no decision: go to the next round
+//	propose     → no usable proposal in time: prevote NIL; if we had already
+//	              voted, the round is stuck: send our votes again. Either
+//	              way, start the rebroadcast timer of this round.
+//	prevote     → 2f+1 prevotes but no quorum for one value: precommit NIL
+//	precommit   → 2f+1 precommits but no decision: go to the next round
+//	rebroadcast → still in this round: send our votes again, and again later
 func (e *Engine) OnTimeout(t Timeout) {
 	if t.Height != e.Height || t.Round != e.Round {
 		return
 	}
 	switch {
-	case t.Step == StepPropose && e.Step == StepPropose:
-		e.logTimeout(t)
-		if e.castVote(types.Prevote, types.ZeroHash) {
-			e.Step = StepPrevote
+	case t.Step == StepPropose:
+		if e.Step == StepPropose {
+			e.logTimeout(t)
+			if e.castVote(types.Prevote, types.ZeroHash) {
+				e.Step = StepPrevote
+			}
+		} else {
+			e.rebroadcast()
 		}
+		e.rebroadcastLater()
+	case t.Step == StepRebroadcast:
+		e.rebroadcast()
+		e.rebroadcastLater()
+		return
 	case t.Step == StepPrevote && e.Step == StepPrevote:
 		e.logTimeout(t)
 		if e.castVote(types.Precommit, types.ZeroHash) {
@@ -69,6 +87,26 @@ func (e *Engine) OnTimeout(t Timeout) {
 		return
 	}
 	e.progress()
+}
+
+// rebroadcast sends our own signed votes of the current round again. Before
+// GST any copy may have been dropped; peers that already have a vote ignore
+// the new copy (gossip dedup by message ID), the others finally count it.
+func (e *Engine) rebroadcast() {
+	for _, typ := range []types.VoteType{types.Prevote, types.Precommit} {
+		if v, ok := e.signer.Signed(typ, e.Height, e.Round); ok {
+			e.env.Broadcast(&types.VoteMsg{Vote: v})
+		}
+	}
+}
+
+// rebroadcastLater re-arms the rebroadcast timer. It is NOT de-duplicated
+// like the other timers: each firing schedules the next one, and the chain
+// dies by itself (stale timer) as soon as the round or height changes. Only
+// the propose timer starts it, and that one fires once per round.
+func (e *Engine) rebroadcastLater() {
+	t := Timeout{Height: e.Height, Round: e.Round, Step: StepRebroadcast}
+	e.env.ScheduleTimeout(e.timeout(e.cfg.TimeoutProposeMs), t)
 }
 
 func (e *Engine) logTimeout(t Timeout) {

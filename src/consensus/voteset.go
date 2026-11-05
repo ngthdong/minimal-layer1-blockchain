@@ -145,3 +145,15 @@ func (vs *VoteSet) Rounds(h uint64, typ types.VoteType) []int32 {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// Voters counts the distinct validators with a prevote or a precommit at
+// (h, r): how many validators are known to have reached that round.
+func (vs *VoteSet) Voters(h uint64, r int32) int {
+	ids := map[types.NodeID]bool{}
+	for _, typ := range []types.VoteType{types.Prevote, types.Precommit} {
+		for id := range vs.votes[VoteKey{Height: h, Round: r, Type: typ}] {
+			ids[id] = true
+		}
+	}
+	return len(ids)
+}

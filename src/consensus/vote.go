@@ -44,11 +44,31 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 // called after each event (proposal, body, vote) and is idempotent: each rule
 // fires at most once per round thanks to Step and the vote signer.
 func (e *Engine) progress() {
+	e.checkRoundSkip() // first: the other rules act on the round we end up in
 	e.tryPrevote()
 	e.checkPrevoteQuorum()
 	e.updateValid()
 	e.checkTimers()
 	e.checkCommit() // last: it may start the next height
+}
+
+// checkRoundSkip: if f+1 validators already vote in a higher round r of
+// this height, at least one honest node is there: we fell behind (lost
+// votes, a timeout that fired later than theirs). Jump straight to r instead
+// of timing out round after round. f+1, not 2f+1: f Byzantine validators
+// alone can never drag us into a new round.
+func (e *Engine) checkRoundSkip() {
+	target := e.Round
+	for _, typ := range []types.VoteType{types.Prevote, types.Precommit} {
+		for _, r := range e.Votes.Rounds(e.Height, typ) {
+			if r > target && e.Votes.Voters(e.Height, r) >= e.vals.F()+1 {
+				target = r
+			}
+		}
+	}
+	if target > e.Round {
+		e.enterNewRound(target, "skip_from", strconv.Itoa(int(e.Round)))
+	}
 }
 
 // tryPrevote: rules 3 and 5 for the proposal of the current round.

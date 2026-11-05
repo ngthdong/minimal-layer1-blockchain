@@ -111,11 +111,11 @@ func (e *Engine) StartHeight(h uint64) {
 
 // enterNewRound moves to round r of the current height; the proposer of the
 // round builds and announces a block. Locks are KEPT: they only end with the
-// height. The propose timer starts now.
-func (e *Engine) enterNewRound(r int32) {
+// height. The propose timer starts now. kv is appended to the log line.
+func (e *Engine) enterNewRound(r int32, kv ...string) {
 	e.Round, e.Step = r, StepPropose
 	proposer := e.vals.Proposer(e.Height, r)
-	e.env.Log(logging.EvNewRound, e.Height, r, "proposer", node(proposer))
+	e.env.Log(logging.EvNewRound, e.Height, r, append([]string{"proposer", node(proposer)}, kv...)...)
 	e.schedule(StepPropose, e.cfg.TimeoutProposeMs)
 	if proposer == e.ID {
 		e.propose()
