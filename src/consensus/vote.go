@@ -16,6 +16,7 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 		return false
 	}
 	if v.Height > e.Height {
+		e.noticeAhead(from, v.Height)
 		cp := v.Clone()
 		e.buffer(v.Height, buffered{from: from, vote: &cp})
 		return true // valid signature: worth relaying, peers may need it now
@@ -179,16 +180,10 @@ func (e *Engine) checkCommit() {
 		}
 		p := e.bodies[bh]
 		if p == nil {
-			return // decided, but we lack the body: wait for it (or sync)
+			return // decided, but the body is still on its way (if it never comes: lagging())
 		}
 		cert := types.CommitCert{Height: e.Height, Round: r, BlockHash: bh, Precommits: e.Votes.VotesFor(key, bh)}
-		if err := e.env.Commit(p.block.Clone(), cert, p.post); err != nil {
-			e.env.Log(logging.EvReject, e.Height, r, "type", "COMMIT", "block", bh.Short(), "reason", err.Error())
-			return // our own ledger refuses: a safety alarm, never move on silently
-		}
-		e.env.Log(logging.EvCommit, e.Height, r, "block", bh.Short(),
-			"txs", strconv.Itoa(len(p.block.Txs)), "state", p.post.Hash().Short())
-		e.StartHeight(e.Height + 1)
+		e.commit(p.block.Clone(), cert, p.post)
 		return
 	}
 }

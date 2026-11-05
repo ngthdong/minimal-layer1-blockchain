@@ -28,6 +28,10 @@ type Node struct {
 
 	seen    map[types.Hash]struct{} // message IDs already handled (gossip dedup)
 	crashed bool                    // stopped for good (Crash)
+
+	synced    map[uint64]syncedBlock // sync answers waiting for their turn
+	syncAsked bool                   // a SyncRequest went out at syncAt
+	syncAt    uint64
 }
 
 func New(id types.NodeID, chainID string, reg state.Registry, net *network.Network,
@@ -35,7 +39,8 @@ func New(id types.NodeID, chainID string, reg state.Registry, net *network.Netwo
 	return &Node{
 		ID: id, chainID: chainID, reg: reg, net: net, log: log, clock: clock,
 		State: state.New(), Ledger: ledger.New(), Mempool: mempool.New(),
-		seen: make(map[types.Hash]struct{}),
+		seen:   make(map[types.Hash]struct{}),
+		synced: make(map[uint64]syncedBlock),
 	}
 }
 
@@ -79,8 +84,12 @@ func (n *Node) HandleMessage(env types.Envelope) {
 		if n.Engine != nil && n.Engine.OnVote(env.From, &m.Vote) {
 			n.relay(env.From, m) // gossip: peers that missed the original still get it
 		}
-	default:
-		// Sync messages
+	case *types.SyncRequest:
+		n.onSyncRequest(env.From, m)
+	case *types.SyncResponse:
+		if n.Engine != nil {
+			n.onSyncResponse(env.From, m)
+		}
 	}
 }
 

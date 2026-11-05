@@ -48,6 +48,9 @@ type Env interface {
 	Commit(block types.Block, cert types.CommitCert, post *state.State) error
 	// ScheduleTimeout calls engine.OnTimeout(t) after afterMs of virtual time.
 	ScheduleTimeout(afterMs uint64, t Timeout)
+	// RequestSync asks peer for the finalized blocks we are missing; the
+	// node answers with CommitSynced for each block that arrives.
+	RequestSync(peer types.NodeID)
 }
 
 // pending is a block of the current height whose body was checked.
@@ -155,6 +158,7 @@ func (e *Engine) propose() {
 // — from the same peer, which announced it and therefore holds it.
 func (e *Engine) OnProposal(from types.NodeID, p *types.Proposal) {
 	if p.Height > e.Height {
+		e.noticeAhead(from, p.Height)
 		cp := p.Clone()
 		e.buffer(p.Height, buffered{from: from, prop: &cp}) // checked when we get there
 		return

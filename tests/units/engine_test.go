@@ -29,7 +29,10 @@ type fakeEnv struct {
 	commits   []types.CommitCert // what Commit received
 	commitErr error              // if set, Commit refuses
 	timers    []scheduled        // what ScheduleTimeout received
+	syncs     []types.NodeID     // peers RequestSync was called with
 }
+
+func (f *fakeEnv) RequestSync(peer types.NodeID) { f.syncs = append(f.syncs, peer) }
 
 type scheduled struct {
 	after uint64

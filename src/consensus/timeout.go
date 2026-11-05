@@ -93,6 +93,9 @@ func (e *Engine) OnTimeout(t Timeout) {
 // GST any copy may have been dropped; peers that already have a vote ignore
 // the new copy (gossip dedup by message ID), the others finally count it.
 func (e *Engine) rebroadcast() {
+	if peer, ok := e.lagging(); ok {
+		e.env.RequestSync(peer)
+	}
 	for _, typ := range []types.VoteType{types.Prevote, types.Precommit} {
 		if v, ok := e.signer.Signed(typ, e.Height, e.Round); ok {
 			e.env.Broadcast(&types.VoteMsg{Vote: v})
