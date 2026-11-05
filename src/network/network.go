@@ -55,11 +55,48 @@ func (n *Network) SetPeers(id types.NodeID, peers []types.NodeID) {
 
 func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
 
+// Send transmits msg from one node to another. The message is deep-copied
+// NOW, so the sender may reuse or change its object afterwards.
+//
+// After GST: one delay in [min_delay, Δ], always delivered.
+// Before GST: the message may be dropped, duplicated, and delayed up to
+// pre_gst.max_delay_ms (which may exceed Δ). Messages sent before GST and
+// lost are NOT re-sent by the network: nodes re-send on timeout (stage 29).
+//
+// The number of random draws per Send is fixed (1 after GST, 4 before),
+// whatever the outcome, so changing a probability in the config does not
+// shift the delays of every later message.
 func (n *Network) Send(from, to types.NodeID, msg types.Message) {
 	env := types.Envelope{From: from, To: to, Msg: msg.Clone()}
-	delay := n.rng.Range(n.cfg.MinDelayMs, n.cfg.DeltaMs)
-	n.logEvent(int(from), logging.EvSend, env, "to", node(to), "delay", strconv.FormatUint(delay, 10))
-	n.clock.At(n.clock.Now()+delay, func() { n.deliver(env) })
+	now := n.clock.Now()
+	if now >= n.cfg.GSTMs {
+		delay := n.rng.Range(n.cfg.MinDelayMs, n.cfg.DeltaMs)
+		n.logSend(env, delay)
+		n.clock.At(now+delay, func() { n.deliver(env) })
+		return
+	}
+
+	pre := n.cfg.PreGST
+	drop := n.rng.Chance(pre.DropProb)
+	dup := n.rng.Chance(pre.DupProb)
+	delay := n.rng.Range(n.cfg.MinDelayMs, pre.MaxDelayMs)
+	dupDelay := n.rng.Range(n.cfg.MinDelayMs, pre.MaxDelayMs)
+
+	n.logSend(env, delay)
+	if drop {
+		n.logEvent(int(from), logging.EvDrop, env, "to", node(to), "reason", "pre_gst")
+		return
+	}
+	n.clock.At(now+delay, func() { n.deliver(env) })
+	if dup {
+		copyEnv := types.Envelope{From: from, To: to, Msg: msg.Clone()} // its own copy
+		n.logEvent(int(from), logging.EvDup, copyEnv, "to", node(to), "delay", strconv.FormatUint(dupDelay, 10))
+		n.clock.At(now+dupDelay, func() { n.deliver(copyEnv) })
+	}
+}
+
+func (n *Network) logSend(env types.Envelope, delay uint64) {
+	n.logEvent(int(env.From), logging.EvSend, env, "to", node(env.To), "delay", strconv.FormatUint(delay, 10))
 }
 
 func (n *Network) Broadcast(from types.NodeID, msg types.Message) {
