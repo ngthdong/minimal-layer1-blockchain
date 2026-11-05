@@ -38,6 +38,7 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 // fires at most once per round thanks to Step and the vote signer.
 func (e *Engine) progress() {
 	e.tryPrevote()
+	e.checkPrevoteQuorum()
 }
 
 // tryPrevote: rule 3 (prevote only valid blocks) and rule 5 (respect the lock).
@@ -68,4 +69,32 @@ func (e *Engine) tryPrevote() {
 	if e.castVote(types.Prevote, bh) {
 		e.Step = StepPrevote
 	}
+}
+
+// checkPrevoteQuorum: once we have prevoted in the current round, 2f+1
+// prevotes for a block B whose body we hold make us LOCK on B and precommit B
+// (rule 4). 2f+1 prevotes for NIL make us precommit NIL. Either happens at
+// most once per round (Step moves to Precommit).
+func (e *Engine) checkPrevoteQuorum() {
+	if e.Step != StepPrevote {
+		return
+	}
+	key := VoteKey{Height: e.Height, Round: e.Round, Type: types.Prevote}
+	bh, ok := e.Votes.Majority(key, e.vals.Quorum())
+	switch {
+	case !ok:
+		return // no quorum yet
+	case bh.IsZero():
+		if e.castVote(types.Precommit, types.ZeroHash) {
+			e.Step = StepPrecommit
+		}
+	case e.bodies[bh] != nil:
+		e.LockedRound, e.LockedHash = e.Round, bh
+		e.ValidRound, e.ValidHash = e.Round, bh
+		e.env.Log(logging.EvLock, e.Height, e.Round, "block", bh.Short())
+		if e.castVote(types.Precommit, bh) {
+			e.Step = StepPrecommit
+		}
+	}
+	// 2f+1 for a block whose body we lack: wait for the body (OnBody calls progress).
 }

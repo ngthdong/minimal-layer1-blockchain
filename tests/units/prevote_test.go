@@ -19,6 +19,14 @@ func readyEngine(t *testing.T) (*consensus.Engine, *fakeEnv, types.Hash) {
 	return e, env, p.BlockHash()
 }
 
+// votesFrom feeds signed votes of the given validators into e.
+func votesFrom(e *consensus.Engine, ids []types.NodeID, typ types.VoteType, bh types.Hash) {
+	for _, id := range ids {
+		v := signedVote(id, typ, 1, 0, bh)
+		e.OnVote(id, &v)
+	}
+}
+
 func count(env *fakeEnv, prefix string) int {
 	n := 0
 	for _, l := range env.logs {
@@ -38,6 +46,52 @@ func TestPrevoteForValidBlock(t *testing.T) {
 	v := env.bcast[len(env.bcast)-1].(*types.VoteMsg).Vote
 	if v.Type != types.Prevote || v.BlockHash != bh || v.Validator != 0 {
 		t.Fatal("broadcast vote is not our prevote for the block")
+	}
+}
+
+// Rule 4: 2f+1 prevotes (ours + 6) → lock and precommit; 2f is not enough.
+func TestLockAndPrecommitOnPrevoteQuorum(t *testing.T) {
+	e, env, bh := readyEngine(t)
+	votesFrom(e, []types.NodeID{2, 3, 4, 5, 6}, types.Prevote, bh) // 6 with ours
+	if e.Step != consensus.StepPrevote || e.LockedRound != -1 {
+		t.Fatal("locked with only 2f prevotes")
+	}
+	votesFrom(e, []types.NodeID{7}, types.Prevote, bh) // 7 = 2f+1
+	if e.Step != consensus.StepPrecommit || e.LockedRound != 0 || e.LockedHash != bh {
+		t.Fatalf("step=%d locked=%d", e.Step, e.LockedRound)
+	}
+	if !env.logged("LOCK h=1 r=0 block "+bh.Short()) || !env.logged("PRECOMMIT h=1 r=0 block "+bh.Short()) {
+		t.Fatalf("logs = %q", env.logs)
+	}
+	votesFrom(e, []types.NodeID{8, 9}, types.Prevote, bh)
+	if count(env, "PRECOMMIT") != 1 || count(env, "LOCK") != 1 {
+		t.Fatal("more prevotes must not lock or precommit again")
+	}
+}
+
+// 2f+1 NIL prevotes → precommit NIL, no lock.
+func TestPrecommitNilOnNilQuorum(t *testing.T) {
+	e, env, _ := readyEngine(t)
+	votesFrom(e, []types.NodeID{2, 3, 4, 5, 6, 7, 8}, types.Prevote, types.ZeroHash)
+	if !env.logged("PRECOMMIT h=1 r=0 block nil") || e.LockedRound != -1 {
+		t.Fatalf("locked=%d logs=%q", e.LockedRound, env.logs)
+	}
+}
+
+// A prevote quorum seen before our own prevote waits for us (we need the body).
+func TestQuorumBeforeBodyWaits(t *testing.T) {
+	_, p, txs := proposerEngine(t)
+	bh := p.BlockHash()
+	e, env := newEngine(t, 0)
+	e.StartHeight(1)
+	e.OnProposal(p.Proposer, &p)
+	votesFrom(e, []types.NodeID{1, 2, 3, 4, 5, 6, 7}, types.Prevote, bh)
+	if count(env, "PRECOMMIT") != 0 {
+		t.Fatal("precommitted a block whose body we do not have")
+	}
+	e.OnBody(p.Proposer, &types.BodyResponse{Height: 1, BlockHash: bh, Txs: txs})
+	if !env.logged("PREVOTE h=1 r=0 block "+bh.Short()) || !env.logged("PRECOMMIT h=1 r=0 block "+bh.Short()) {
+		t.Fatalf("logs = %q", env.logs)
 	}
 }
 

@@ -49,3 +49,18 @@ func TestProposalHeaderThenBodyReachesEveryNode(t *testing.T) {
 		t.Fatal("expected exactly one proposal and no rejection")
 	}
 }
+
+// Every node prevotes the height-1 block, sees 2f+1 prevotes, locks and
+// precommits it.
+func TestEveryNodePrevotesLocksAndPrecommits(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t1_normal")
+	_, log := testutil.Run(t, cfg, "prevote_lock")
+	for _, ev := range []string{"ev=PREVOTE       h=1 r=0", "ev=LOCK          h=1 r=0", "ev=PRECOMMIT     h=1 r=0"} {
+		if got := testutil.CountLines(log, ev); got != cfg.NumValidators {
+			t.Fatalf("%q appears %d times, want %d", ev, got, cfg.NumValidators)
+		}
+	}
+	if testutil.CountLines(log, "block=nil") != 0 {
+		t.Fatal("nobody should vote NIL in a normal run")
+	}
+}
