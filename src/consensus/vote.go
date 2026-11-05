@@ -15,8 +15,13 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 		e.reject("VOTE", v.Height, v.Round, from, err)
 		return false
 	}
-	if v.Height != e.Height {
-		return false // other heights
+	if v.Height > e.Height {
+		cp := v.Clone()
+		e.buffer(v.Height, buffered{from: from, vote: &cp})
+		return true // valid signature: worth relaying, peers may need it now
+	}
+	if v.Height < e.Height {
+		return false // a finished height
 	}
 	key := KeyOf(v)
 	known := len(e.Votes.Equivocators(key))

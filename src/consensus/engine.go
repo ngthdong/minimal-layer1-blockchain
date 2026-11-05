@@ -80,10 +80,13 @@ type Engine struct {
 	headers   map[types.Hash]types.BlockHeader // accepted headers, waiting for or with a body
 	bodies    map[types.Hash]*pending          // blocks whose body executed correctly
 	invalid   map[types.Hash]bool              // blocks whose body is provably wrong
+
+	future map[uint64][]buffered // messages for the next height (buffer.go)
 }
 
 func NewEngine(id types.NodeID, chainID string, vals *ValidatorSet, signer *VoteSigner, cfg Config, env Env) *Engine {
-	return &Engine{ID: id, chainID: chainID, vals: vals, cfg: cfg, env: env, signer: signer}
+	return &Engine{ID: id, chainID: chainID, vals: vals, cfg: cfg, env: env, signer: signer,
+		future: make(map[uint64][]buffered)}
 }
 
 // StartHeight resets everything that belongs to one height and enters round 0.
@@ -99,6 +102,7 @@ func (e *Engine) StartHeight(h uint64) {
 	e.invalid = make(map[types.Hash]bool)
 	e.signer.Prune(h)
 	e.enterNewRound(0)
+	e.replay() // proposal and votes of h that arrived while we were still at h-1
 }
 
 // enterNewRound moves to round r of the current height; the proposer of the
@@ -134,8 +138,13 @@ func (e *Engine) propose() {
 // Header-first: the header is checked, and only then is the body requested
 // — from the same peer, which announced it and therefore holds it.
 func (e *Engine) OnProposal(from types.NodeID, p *types.Proposal) {
-	if p.Height != e.Height {
-		return // other heights
+	if p.Height > e.Height {
+		cp := p.Clone()
+		e.buffer(p.Height, buffered{from: from, prop: &cp}) // checked when we get there
+		return
+	}
+	if p.Height < e.Height {
+		return // a finished height
 	}
 	if _, have := e.proposals[p.Round]; have {
 		return // one proposal per round is enough (a second one is equivocation)

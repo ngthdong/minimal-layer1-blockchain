@@ -78,12 +78,20 @@ func (n *Node) HandleMessage(env types.Envelope) {
 	}
 }
 
-// onBodyRequest answers only with a body we have checked ourselves.
+// onBodyRequest answers only with a body we have checked ourselves: a block
+// of our current height, or one we already finalized (the requester may be
+// a height behind us).
 func (n *Node) onBodyRequest(from types.NodeID, req *types.BodyRequest) {
 	if n.Engine == nil {
 		return
 	}
-	if txs, ok := n.Engine.Body(req.Height, req.BlockHash); ok {
+	txs, ok := n.Engine.Body(req.Height, req.BlockHash)
+	if !ok {
+		if e, final := n.Ledger.Get(req.Height); final && e.Block.Hash() == req.BlockHash {
+			txs, ok = e.Block.Txs, true
+		}
+	}
+	if ok {
 		n.net.Send(n.ID, from, &types.BodyResponse{Height: req.Height, BlockHash: req.BlockHash, Txs: txs})
 	}
 }

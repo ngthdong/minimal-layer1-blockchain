@@ -65,3 +65,22 @@ func Run(t *testing.T, cfg *simconfig.Config, logName string) (*sim.Result, []by
 func CountLines(log []byte, substr string) int {
 	return bytes.Count(log, []byte(substr))
 }
+
+// AssertSafety fails if two honest nodes finalized different blocks at the
+// same height.
+func AssertSafety(t *testing.T, res *sim.Result) {
+	t.Helper()
+	if !res.Agreed {
+		t.Fatal("SAFETY VIOLATION: honest nodes finalized conflicting blocks")
+	}
+}
+
+// AssertProgress fails unless every honest node finalized at least height h.
+func AssertProgress(t *testing.T, res *sim.Result, h uint64) {
+	t.Helper()
+	for _, id := range res.Honest {
+		if got := res.Nodes[id].Ledger.Height(); got < h {
+			t.Fatalf("node %d finalized height %d, want >= %d", id, got, h)
+		}
+	}
+}

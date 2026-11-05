@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/sim"
 	"github.com/ngthdong/minimal-layer1-blockchain/tests/testutil"
 )
 
@@ -24,9 +25,11 @@ func TestT8Determinism(t *testing.T) {
 }
 
 // Workload + gossip: every client tx reaches every node, where it is either
-// already committed or still waiting in the mempool.
+// already committed or still waiting in the mempool. The run stops as soon as
+// max_height is reached, so the workload is shortened to end well before.
 func TestWorkloadReachesEveryNode(t *testing.T) {
 	cfg := testutil.LoadConfig(t, "t1_normal")
+	cfg.Workload.TxCount = 20 // last tx at 2 s; the run ends later
 	res, _ := testutil.Run(t, cfg, "workload")
 	for _, nd := range res.Nodes {
 		committed := 0
@@ -72,23 +75,34 @@ func TestEveryNodePrevotesLocksAndPrecommits(t *testing.T) {
 	}
 }
 
-// Blocks are finalized and every honest node that finalized a height has the
-// same block there (safety). T1 itself (all nodes reach max_height) needs the
-// buffering of messages for the next height.
-func TestCommitsAreConsistent(t *testing.T) {
+// T1: every honest node finalizes the same chain up to max_height and ends
+// with the same state.
+func TestT1Normal(t *testing.T) {
 	cfg := testutil.LoadConfig(t, "t1_normal")
-	res, _ := testutil.Run(t, cfg, "commits")
-	if !res.Agreed {
-		t.Fatal("SAFETY VIOLATION: two honest nodes finalized different blocks")
+	res, _ := testutil.Run(t, cfg, "T1_normal")
+	checkT1(t, res, cfg.MaxHeight)
+}
+
+// The same with twice the network delay: messages for the next height now
+// arrive even more often before a node gets there.
+func TestT1SlowerNetwork(t *testing.T) {
+	cfg := testutil.LoadConfig(t, "t1_normal")
+	cfg.Network.DeltaMs, cfg.Network.PreGST.MaxDelayMs = 400, 400
+	res, _ := testutil.Run(t, cfg, "T1_delta400")
+	checkT1(t, res, cfg.MaxHeight)
+}
+
+func checkT1(t *testing.T, res *sim.Result, maxHeight uint64) {
+	t.Helper()
+	testutil.AssertSafety(t, res)
+	testutil.AssertProgress(t, res, maxHeight)
+	if res.FinalStateHash.IsZero() {
+		t.Fatal("no final state hash")
 	}
 	for _, id := range res.Honest {
-		nd := res.Nodes[id]
-		if nd.Ledger.Height() < 1 {
-			t.Fatalf("node %d finalized nothing", id)
-		}
-		e, _ := nd.Ledger.Get(nd.Ledger.Height())
-		if nd.State.Hash() != e.Block.Header.StateHash {
-			t.Fatalf("node %d state does not match its last block", id)
+		e, _ := res.Nodes[id].Ledger.Get(maxHeight)
+		if e.Block.Header.StateHash != res.FinalStateHash {
+			t.Fatalf("node %d has another state at height %d", id, maxHeight)
 		}
 	}
 }
