@@ -156,8 +156,12 @@ func (n *Node) relay(from types.NodeID, m types.Message) {
 
 // reject logs: REJECT h r type=<kind> id=<short> from=<peer> reason=<token>
 func (n *Node) reject(m types.Message, from types.NodeID, err error) {
+	src := peer(from)
+	if from == n.ID {
+		src = "client" // SubmitTx: no peer ever sends us our own messages
+	}
 	n.log.Log(int(n.ID), logging.EvReject, m.MsgHeight(), 0,
-		"type", m.Kind().String(), "id", m.ID().Short(), "from", peer(from), "reason", err.Error())
+		"type", m.Kind().String(), "id", m.ID().Short(), "from", src, "reason", err.Error())
 }
 
 func peer(id types.NodeID) string { return fmt.Sprintf("%02d", id) }

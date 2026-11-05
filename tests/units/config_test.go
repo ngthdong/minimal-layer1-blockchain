@@ -49,6 +49,16 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 		"reserved account": func(c *simconfig.Config) { c.Workload.Accounts = []string{"sys"} },
 		"slash in account": func(c *simconfig.Config) { c.Workload.Accounts = []string{"Al/ice"} },
 		"bad topology":     func(c *simconfig.Config) { c.Network.Topology = "ring" },
+		"unknown inject": func(c *simconfig.Config) {
+			c.Workload.Inject = []simconfig.InjectTx{{Kind: "teleport", Account: "Alice"}}
+		},
+		"inject account": func(c *simconfig.Config) {
+			c.Workload.Inject = []simconfig.InjectTx{{Kind: "bad_signature", Account: "Mallory"}}
+		},
+		"foreign_key, 1 account": func(c *simconfig.Config) {
+			c.Workload.Accounts = []string{"Alice"}
+			c.Workload.Inject = []simconfig.InjectTx{{Kind: "foreign_key", Account: "Alice"}}
+		},
 	}
 	for name, change := range cases {
 		if mutate(t, change) == nil {

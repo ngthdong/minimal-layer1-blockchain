@@ -70,7 +70,7 @@ type InjectTx struct {
 	Kind    string `json:"kind"`
 	AtMs    uint64 `json:"at_ms"`
 	Account string `json:"account"`
-	Repeat  int    `json:"repeat"`
+	Repeat  int    `json:"repeat"` // copies, each to a random node (0 = 1)
 }
 
 // ByzantineSpec: silent, crash, equivocate, invalid_proposal, spam.
@@ -81,6 +81,9 @@ type ByzantineSpec struct {
 }
 
 // F is the fault threshold for n = 3f+1.
+// InjectKinds are the crafted bad transactions the workload can add (T3).
+var InjectKinds = map[string]bool{"bad_signature": true, "wrong_domain": true, "foreign_key": true}
+
 func (c *Config) F() int { return (c.NumValidators - 1) / 3 }
 
 func Load(path string) (*Config, error) {
@@ -137,6 +140,18 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("account %q is empty, reserved, duplicated or has '/', ' ' or '='", a)
 		}
 		seenAcc[a] = true
+	}
+	for _, in := range c.Workload.Inject {
+		switch {
+		case !InjectKinds[in.Kind]:
+			return fmt.Errorf("inject kind %q is unknown", in.Kind)
+		case !seenAcc[in.Account]:
+			return fmt.Errorf("inject account %q is not in workload.accounts", in.Account)
+		case in.Kind == "foreign_key" && len(c.Workload.Accounts) < 2:
+			return fmt.Errorf("inject foreign_key needs a second account to steal a key from")
+		case in.Repeat < 0:
+			return fmt.Errorf("inject repeat must be >= 0")
+		}
 	}
 	seenNode := map[int]bool{}
 	for _, b := range c.Byzantine {

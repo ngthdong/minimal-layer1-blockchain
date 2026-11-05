@@ -14,6 +14,7 @@ var (
 	ErrBadSignature  = errors.New("bad_signature")
 	ErrNotOwner      = errors.New("key_not_owned_by_sender")
 	ErrBadNonce      = errors.New("bad_nonce")
+	ErrWrongDomain   = errors.New("wrong_domain") // a real signature, made for another message type
 )
 
 // NoncePrefix is where each sender's last used nonce is stored:
@@ -53,7 +54,7 @@ func CheckTx(chainID string, reg Registry, tx *types.Tx) error {
 		return ErrUnknownSender
 	}
 	if !crypto.Verify(pub, crypto.Context(crypto.DomainTx, chainID), tx.SigningBytes(), tx.Sig) {
-		return ErrBadSignature
+		return badSignature(pub, chainID, tx)
 	}
 	if Owner(tx.Key) != tx.Sender {
 		return ErrNotOwner
@@ -92,3 +93,16 @@ func (s *State) ApplyBlock(chainID string, reg Registry, txs []types.Tx) error {
 }
 
 func (s *State) set(key string, value []byte) { s.kv[key] = cloneValue(value) }
+
+// badSignature tells a forged or corrupted signature (bad_signature) from a
+// genuine one made under another domain of this chain (wrong_domain). The tx
+// is refused either way: domain separation is what makes the second one
+// useless. The extra checks run only for txs that are already invalid.
+func badSignature(pub crypto.PublicKey, chainID string, tx *types.Tx) error {
+	for _, d := range []string{crypto.DomainVote, crypto.DomainHeader, crypto.DomainProposal} {
+		if crypto.Verify(pub, crypto.Context(d, chainID), tx.SigningBytes(), tx.Sig) {
+			return ErrWrongDomain
+		}
+	}
+	return ErrBadSignature
+}

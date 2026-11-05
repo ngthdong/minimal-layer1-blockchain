@@ -1,10 +1,11 @@
 // Package workload plays the clients (Alice, Bob, ...): it decides, before the
 // run starts, which signed transactions are handed to which node and when.
-// Crafted bad transactions for T3/T4 are added.
+// Crafted bad transactions (T3) are in inject.go.
 package workload
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/ngthdong/minimal-layer1-blockchain/crypto"
 	"github.com/ngthdong/minimal-layer1-blockchain/simconfig"
@@ -42,8 +43,13 @@ func Registry(accounts []*Account) state.Registry {
 // Sign builds and signs a tx from account a, using the NEXT nonce.
 func (a *Account) Sign(chainID, key string, value []byte) types.Tx {
 	a.Nonce++
-	tx := types.Tx{Sender: a.Name, Nonce: a.Nonce, Key: key, Value: value}
-	tx.Sig = crypto.Sign(a.Priv, crypto.Context(crypto.DomainTx, chainID), tx.SigningBytes())
+	return a.signAs(crypto.DomainTx, chainID, a.Nonce, key, value)
+}
+
+// signAs signs a tx with an explicit nonce under any domain (bad txs use it).
+func (a *Account) signAs(domain, chainID string, nonce uint64, key string, value []byte) types.Tx {
+	tx := types.Tx{Sender: a.Name, Nonce: nonce, Key: key, Value: value}
+	tx.Sig = crypto.Sign(a.Priv, crypto.Context(domain, chainID), tx.SigningBytes())
 	return tx
 }
 
@@ -57,7 +63,8 @@ type Submission struct {
 	Tx   types.Tx
 }
 
-// Plan builds the whole list of client submissions for a run, in time order.
+// Plan builds the whole list of client submissions for a run, in time order
+// (at equal times, normal txs first).
 // Tx i (0-based) is sent at (i+1)*interval_ms by accounts[i mod len] to a
 // random node, writing "<name>/message" = "msg-<i>". Everything depends only
 // on the config and rng, so the same seed gives the same plan.
@@ -73,5 +80,9 @@ func Plan(cfg *simconfig.Config, accounts []*Account, rng Rand) []Submission {
 			Tx:   tx,
 		})
 	}
+	// Bad txs draw from rng only after every normal tx: a scenario without
+	// injections gets exactly the same plan as before they existed.
+	out = append(out, injected(cfg, accounts, out, rng)...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].AtMs < out[j].AtMs })
 	return out
 }

@@ -49,6 +49,8 @@ func TestApplyValidTx(t *testing.T) {
 func TestRejectedTxReasons(t *testing.T) {
 	tampered := goodTx("Alice", 1, "hello")
 	tampered.Value = []byte("HELLO")
+	stolen := signedTx("Bob", 1, "Alice/message", "v", crypto.DomainVote)
+	stolen.Sender = "Alice" // a VOTE-domain signature, but not by Alice
 	cases := []struct {
 		name string
 		tx   types.Tx
@@ -56,7 +58,9 @@ func TestRejectedTxReasons(t *testing.T) {
 	}{
 		{"unknown sender", signedTx("Mallory", 1, "Mallory/x", "v", crypto.DomainTx), state.ErrUnknownSender},
 		{"tampered value", tampered, state.ErrBadSignature},
-		{"vote domain", signedTx("Alice", 1, "Alice/message", "v", crypto.DomainVote), state.ErrBadSignature},
+		{"vote domain", signedTx("Alice", 1, "Alice/message", "v", crypto.DomainVote), state.ErrWrongDomain},
+		{"header domain", signedTx("Alice", 1, "Alice/message", "v", crypto.DomainHeader), state.ErrWrongDomain},
+		{"other signer, vote domain", stolen, state.ErrBadSignature},
 		{"foreign key", signedTx("Alice", 1, "Bob/message", "v", crypto.DomainTx), state.ErrNotOwner},
 		{"nonce key", signedTx("Alice", 1, "sys/nonce/Alice", "v", crypto.DomainTx), state.ErrNotOwner},
 		{"no owner", signedTx("Alice", 1, "message", "v", crypto.DomainTx), state.ErrNotOwner},
