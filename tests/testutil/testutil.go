@@ -50,14 +50,21 @@ func LoadConfig(t *testing.T, name string) *simconfig.Config {
 // the result and the raw log bytes.
 func Run(t *testing.T, cfg *simconfig.Config, logName string) (*sim.Result, []byte) {
 	t.Helper()
+	res, log := RunInMemory(t, cfg)
+	path := filepath.Join(RepoRoot(t), "logs", logName+".log")
+	if err := os.WriteFile(path, log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return res, log
+}
+
+// RunInMemory is Run without saving the log (seed sweeps run hundreds).
+func RunInMemory(t *testing.T, cfg *simconfig.Config) (*sim.Result, []byte) {
+	t.Helper()
 	var buf bytes.Buffer
 	res, err := sim.Run(cfg, &buf)
 	if err != nil {
 		t.Fatalf("run %s: %v", cfg.Name, err)
-	}
-	path := filepath.Join(RepoRoot(t), "logs", logName+".log")
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
 	}
 	assertOnlyByzantineBlocked(t, cfg, buf.Bytes())
 	return res, buf.Bytes()

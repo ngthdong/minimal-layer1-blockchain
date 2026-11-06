@@ -11,9 +11,8 @@ import (
 // can only catch up by block sync: blocks plus commit certificates, each
 // verified before it is committed.
 func TestT5LaggingNodesCatchUpBySync(t *testing.T) {
-	cfg := testutil.LoadConfig(t, "t5_presync_drop")
-	cfg.Network.PreGST.DropProb = 0.1
-	res, log := testutil.Run(t, cfg, "T5_drop10_sync")
+	cfg := testutil.LoadConfig(t, "t5_lagging_sync") // t5_presync_drop with 10% loss
+	res, log := testutil.Run(t, cfg, "T5_lagging_sync")
 	testutil.AssertSafety(t, res)
 	testutil.AssertProgress(t, res, cfg.MaxHeight)
 	if testutil.CountLines(log, "sync_from=") == 0 {
