@@ -78,7 +78,7 @@ func (n *Node) HandleMessage(env types.Envelope) {
 	case *types.BodyRequest:
 		n.onBodyRequest(env.From, m)
 	case *types.BodyResponse:
-		if n.Engine != nil {
+		if n.Engine != nil && !n.onSyncBody(env.From, m) {
 			n.Engine.OnBody(env.From, m)
 		}
 	case *types.VoteMsg:

@@ -32,7 +32,19 @@ func (b Block) Clone() Block { return Block{Header: b.Header.Clone(), Txs: clone
 func (p Proposal) Clone() Proposal {
 	p.Header = p.Header.Clone()
 	p.Sig = cloneBytes(p.Sig)
+	p.POL = CloneVotes(p.POL)
 	return p
+}
+
+func CloneVotes(vs []Vote) []Vote {
+	if vs == nil {
+		return nil
+	}
+	out := make([]Vote, len(vs))
+	for i := range vs {
+		out[i] = vs[i].Clone()
+	}
+	return out
 }
 
 func (c CommitCert) Clone() CommitCert {

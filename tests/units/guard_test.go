@@ -44,8 +44,9 @@ func TestGuardBlocksAFloodingPeer(t *testing.T) {
 	}
 	log := readLog()
 	for _, want := range []string{
-		"t=0000000010 node=01 ev=BLOCK         h=0 r=0 peer=00 msgs=6 window_ms=100 until=310",
-		"t=0000000310 node=01 ev=UNBLOCK       h=0 r=0 peer=00 dropped=4",
+		// type and height of the 6th message, the one over the limit
+		"t=0000000010 node=01 ev=BLOCK         h=5 r=5 type=VOTE id=559b601e peer=00 msgs=6 window_ms=100 until=310",
+		"t=0000000310 node=01 ev=UNBLOCK       h=5 r=5 type=VOTE id=559b601e peer=00 dropped=4",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("missing %q in:\n%s", want, log)

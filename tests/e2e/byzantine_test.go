@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/ngthdong/minimal-layer1-blockchain/simconfig"
@@ -60,6 +61,31 @@ func TestT1WithSilentValidator(t *testing.T) {
 	for _, id := range res.Honest {
 		if n := res.Nodes[id].Mempool.Size(); n != 0 {
 			t.Fatalf("node %d still holds %d txs", id, n)
+		}
+	}
+}
+
+// T1 with node 3 proposing an invalid block whenever it is proposer (h = 3,
+// 13, 23: a bad tx signature, a wrong state hash, a wrong parent). Every
+// other node refuses it with the reason logged, prevotes NIL, and the next
+// round commits a valid block (rule 3). No block built by node 3 is final.
+func TestT1WithInvalidProposer(t *testing.T) {
+	cfg := withByzantine(t, "invalid_proposal")
+	cfg.MaxHeight = 25
+	res, log := testutil.Run(t, cfg, "T1_invalid_proposer3")
+	testutil.AssertSafety(t, res)
+	testutil.AssertProgress(t, res, cfg.MaxHeight)
+	for _, want := range []string{"type=BODY from=03 reason=bad_signature",
+		"type=BODY from=03 reason=bad_state_hash", "type=PROPOSAL from=03 reason=bad_parent"} {
+		for _, id := range res.Honest {
+			if !hasLine(log, fmt.Sprintf("node=%02d ev=REJECT", id), want) {
+				t.Fatalf("node %d: no REJECT %s", id, want)
+			}
+		}
+	}
+	for h := uint64(1); h <= cfg.MaxHeight; h++ {
+		if e, _ := res.Nodes[0].Ledger.Get(h); e.Block.Header.Proposer == 3 {
+			t.Fatalf("height %d: a block built by the invalid proposer was finalized", h)
 		}
 	}
 }

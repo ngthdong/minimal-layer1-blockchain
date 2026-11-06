@@ -51,10 +51,13 @@ type (
 		Txs       []Tx
 	}
 	// SyncRequest asks a peer for finalized blocks starting at FromHeight.
+	// SyncResponse carries one finalized HEADER and the certificate proving
+	// it final; the body is fetched with a BodyRequest once the header is
+	// accepted (header before body, as for proposals).
 	SyncRequest  struct{ FromHeight uint64 }
 	SyncResponse struct {
-		Block Block
-		Cert  CommitCert
+		Header BlockHeader
+		Cert   CommitCert
 	}
 )
 
@@ -72,7 +75,7 @@ func (m *VoteMsg) MsgHeight() uint64      { return m.Vote.Height }
 func (m *BodyRequest) MsgHeight() uint64  { return m.Height }
 func (m *BodyResponse) MsgHeight() uint64 { return m.Height }
 func (m *SyncRequest) MsgHeight() uint64  { return m.FromHeight }
-func (m *SyncResponse) MsgHeight() uint64 { return m.Block.Header.Height }
+func (m *SyncResponse) MsgHeight() uint64 { return m.Header.Height }
 
 // msgID = H("ml1b/msg" || kind || content). Content always includes the
 // signature, so two conflicting votes (equivocation) get two IDs and both
@@ -87,8 +90,12 @@ func (m *TxMsg) ID() Hash {
 
 func (m *ProposalMsg) ID() Hash {
 	p := &m.Proposal
-	return msgID(MsgProposal, encoding.NewWriter().
-		Bytes(p.SigningBytes()).Bytes(p.Sig).Bytes(p.Header.Sig))
+	w := encoding.NewWriter().Bytes(p.SigningBytes()).Bytes(p.Sig).Bytes(p.Header.Sig)
+	w.U32(uint32(len(p.POL))) // a copy stripped of its POL must not shadow the real one
+	for i := range p.POL {
+		w.Bytes(p.POL[i].SigningBytes()).Bytes(p.POL[i].Sig)
+	}
+	return msgID(MsgProposal, w)
 }
 
 func (m *VoteMsg) ID() Hash {
@@ -113,9 +120,7 @@ func (m *SyncRequest) ID() Hash {
 
 func (m *SyncResponse) ID() Hash {
 	w := encoding.NewWriter().
-		Bytes(m.Block.Header.SigningBytes()).Bytes(m.Block.Header.Sig)
-	root := TxRoot(m.Block.Txs)
-	w.Fixed(root[:]).U32(uint32(len(m.Cert.Precommits)))
+		Bytes(m.Header.SigningBytes()).Bytes(m.Header.Sig).U32(uint32(len(m.Cert.Precommits)))
 	for i := range m.Cert.Precommits {
 		v := &m.Cert.Precommits[i]
 		w.Bytes(v.SigningBytes()).Bytes(v.Sig)
@@ -132,5 +137,5 @@ func (m *BodyResponse) Clone() Message {
 	return &BodyResponse{Height: m.Height, BlockHash: m.BlockHash, Txs: cloneTxs(m.Txs)}
 }
 func (m *SyncResponse) Clone() Message {
-	return &SyncResponse{Block: m.Block.Clone(), Cert: m.Cert.Clone()}
+	return &SyncResponse{Header: m.Header.Clone(), Cert: m.Cert.Clone()}
 }

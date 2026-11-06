@@ -24,7 +24,6 @@ const (
 	EvPrevote      = "PREVOTE"
 	EvPrecommit    = "PRECOMMIT"
 	EvLock         = "LOCK"
-	EvUnlock       = "UNLOCK"
 	EvTimeout      = "TIMEOUT"
 	EvCommit       = "COMMIT"
 	EvEquivocation = "EQUIVOCATION"

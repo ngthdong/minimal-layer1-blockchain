@@ -35,8 +35,7 @@ func (e *Engine) OnVote(from types.NodeID, v *types.Vote) bool {
 			e.env.Log(logging.EvEquivocation, v.Height, v.Round, "validator", node(v.Validator),
 				"type", v.Type.String(), "first", blockLabel(first.BlockHash), "second", blockLabel(v.BlockHash))
 		}
-		// The second vote is signed too: it now counts toward ITS block
-		// (once), so the rules must be re-checked like for any new vote.
+		return true // evidence for peers; not counted (rule 7), so no rule can fire
 	}
 	e.progress()
 	return true
@@ -80,8 +79,10 @@ func (e *Engine) checkRoundSkip() {
 //   - POLRound = -1 (fresh block): prevote B unless locked on another block;
 //   - POLRound = vr >= 0 (B proposed again): wait until we also see the 2f+1
 //     prevotes for B in round vr, then prevote B if we are not locked, locked
-//     on B, or locked in a round <= vr (we UNLOCK: the network has moved on
-//     to B since our lock); otherwise prevote NIL.
+//     on B, or locked in a round EARLIER than vr: rule 5 lets a node locked
+//     on A prevote B "only after it observes a quorum of valid PREVOTE
+//     messages for that different block in a later round". Seeing that
+//     quorum, it locks B and records round vr (rule 4); otherwise NIL.
 func (e *Engine) tryPrevote() {
 	if e.Step != StepPropose {
 		return
@@ -100,8 +101,8 @@ func (e *Engine) tryPrevote() {
 		return // the proof-of-lock has not reached us (yet)
 	case e.LockedRound == -1 || e.LockedHash == bh:
 		// not locked, or locked on B itself: prevote B
-	case p.POLRound >= 0 && e.LockedRound <= p.POLRound:
-		e.unlock(p.POLRound)
+	case p.POLRound > e.LockedRound:
+		e.relock(p.POLRound, bh)
 	default:
 		bh = types.ZeroHash // locked on another block (rule 5)
 	}
@@ -110,19 +111,34 @@ func (e *Engine) tryPrevote() {
 	}
 }
 
-// hasPOL reports whether we hold 2f+1 prevotes for bh in round r.
+// hasPOL reports whether we observed 2f+1 prevotes for bh in round r.
 func (e *Engine) hasPOL(r int32, bh types.Hash) bool {
-	got, ok := e.Votes.Majority(VoteKey{Height: e.Height, Round: r, Type: types.Prevote}, e.vals.Quorum())
-	return ok && got == bh
+	return e.polFor(r, bh) != nil
 }
 
-// unlock releases our lock because a later round (pol) proved 2f+1 prevotes
-// for another block. Safe: if our locked block had been decided, no other
-// block could have gathered 2f+1 prevotes in a round after it.
-func (e *Engine) unlock(pol int32) {
-	e.env.Log(logging.EvUnlock, e.Height, e.Round, "block", e.LockedHash.Short(),
-		"locked_round", strconv.Itoa(int(e.LockedRound)), "pol", strconv.Itoa(int(pol)))
-	e.LockedRound, e.LockedHash = -1, types.ZeroHash
+// polFor returns 2f+1 prevotes for bh in round r, or nil: from our own vote
+// set, or from the POL a re-proposal carried (checked by VerifyPOL). The two
+// cannot disagree: two quorums of one round share an honest validator.
+func (e *Engine) polFor(r int32, bh types.Hash) []types.Vote {
+	key := VoteKey{Height: e.Height, Round: r, Type: types.Prevote}
+	if got, ok := e.Votes.Majority(key, e.vals.Quorum()); ok && got == bh {
+		return e.Votes.VotesFor(key, bh)
+	}
+	if pol := e.pols[r]; len(pol) > 0 && pol[0].BlockHash == bh {
+		return types.CloneVotes(pol)
+	}
+	return nil
+}
+
+// relock moves our lock from the block we hold to bh, because round pol
+// (later than our lock) has 2f+1 prevotes for bh: rule 4 locks a block when
+// a quorum of prevotes for it is observed, and records that round. Safe: if
+// our old block had been decided, no other block could have gathered 2f+1
+// prevotes in any later round.
+func (e *Engine) relock(pol int32, bh types.Hash) {
+	e.env.Log(logging.EvLock, e.Height, e.Round, "block", bh.Short(),
+		"locked_round", strconv.Itoa(int(pol)), "replaces", e.LockedHash.Short())
+	e.LockedRound, e.LockedHash = pol, bh
 }
 
 // updateValid remembers the latest block that got 2f+1 prevotes in a round
@@ -135,6 +151,11 @@ func (e *Engine) updateValid() {
 		}
 		bh, ok := e.Votes.Majority(VoteKey{Height: e.Height, Round: r, Type: types.Prevote}, e.vals.Quorum())
 		if ok && !bh.IsZero() && e.bodies[bh] != nil {
+			e.ValidRound, e.ValidHash = r, bh
+		}
+	}
+	for r, pol := range e.pols { // the result does not depend on map order: highest r wins
+		if bh := pol[0].BlockHash; r > e.ValidRound && r <= e.Round && e.bodies[bh] != nil {
 			e.ValidRound, e.ValidHash = r, bh
 		}
 	}

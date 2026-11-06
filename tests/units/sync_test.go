@@ -1,6 +1,7 @@
 package unit
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ngthdong/minimal-layer1-blockchain/consensus"
@@ -19,11 +20,13 @@ func certAt(h uint64, bh types.Hash, ids ...types.NodeID) types.CommitCert {
 
 func certFor(bh types.Hash, ids ...types.NodeID) types.CommitCert { return certAt(1, bh, ids...) }
 
-// finalChain returns n consecutive finalized blocks (one Alice tx each) as
-// the SyncResponses a peer would send.
-func finalChain(n int) []types.SyncResponse {
+// finalChain returns n consecutive finalized blocks (one Alice tx each) as a
+// peer serves them: the SyncResponses (header + certificate) and, on
+// request, the BodyResponses.
+func finalChain(n int) ([]types.SyncResponse, []types.BodyResponse) {
 	st, parent := state.New(), types.ZeroHash
-	var out []types.SyncResponse
+	var heads []types.SyncResponse
+	var bodies []types.BodyResponse
 	for h := uint64(1); h <= uint64(n); h++ {
 		txs := []types.Tx{goodTx("Alice", h, "v")}
 		if err := st.ApplyBlock(chain, registry(), txs); err != nil {
@@ -33,28 +36,41 @@ func finalChain(n int) []types.SyncResponse {
 			TxRoot: types.TxRoot(txs), StateHash: st.Hash()}
 		consensus.NewVoteSigner(1, vPrivs[1], chain).SignHeader(&hdr)
 		parent = hdr.Hash()
-		out = append(out, types.SyncResponse{Block: types.Block{Header: hdr, Txs: txs},
-			Cert: certAt(h, parent, 1, 2, 3, 4, 5, 6, 7)})
+		heads = append(heads, types.SyncResponse{Header: hdr, Cert: certAt(h, parent, 1, 2, 3, 4, 5, 6, 7)})
+		bodies = append(bodies, types.BodyResponse{Height: h, BlockHash: parent, Txs: txs})
 	}
-	return out
+	return heads, bodies
 }
 
-// The network reorders sync answers: blocks that arrive early wait for the
-// missing one, then all are committed in height order.
-func TestSyncAnswersOutOfOrder(t *testing.T) {
-	_, nodes, _ := nodeNet(2, 0)
+// Sync is header first: a body is requested only for the accepted header of
+// the next height, and a body sent before that is ignored. Headers that the
+// network delivers early wait for the missing one.
+func TestSyncHeaderBeforeBody(t *testing.T) {
+	_, nodes, readLog := nodeNet(2, 0)
 	nd := nodes[0]
 	nd.Engine = consensus.NewEngine(0, chain, vset(t), consensus.NewVoteSigner(0, vPrivs[0], chain),
 		testConsensusConfig, nd)
 	nd.Engine.StartHeight(1)
-	blocks := finalChain(3)
+	heads, bodies := finalChain(3)
+	nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &bodies[0]}) // no header yet
 	for _, i := range []int{2, 1} {
-		nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &blocks[i]})
+		nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &heads[i]})
 	}
-	if nd.Ledger.Height() != 0 {
-		t.Fatal("committed a block before its parent")
+	if nd.Ledger.Height() != 0 || strings.Contains(readLog(), "type=BODY_REQ") {
+		t.Fatal("a body was used or requested before the header of height 1")
 	}
-	nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &blocks[0]})
+	nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &heads[0]})
+	if strings.Count(readLog(), "type=BODY_REQ") != 1 {
+		t.Fatalf("accepted header 1: want one body request: %s", readLog())
+	}
+	// The body is lost; the header comes again (next sync answer): ask again.
+	nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &heads[0]})
+	if strings.Count(readLog(), "type=BODY_REQ") != 2 {
+		t.Fatal("a lost body was never requested again")
+	}
+	for i := range bodies {
+		nd.HandleMessage(types.Envelope{From: 1, To: 0, Msg: &bodies[i]})
+	}
 	if nd.Ledger.Height() != 3 || nd.Engine.Height != 4 {
 		t.Fatalf("ledger %d, engine at %d: want 3 and 4", nd.Ledger.Height(), nd.Engine.Height)
 	}
@@ -86,6 +102,10 @@ func TestCommitSyncedTrustsOnlyTheCertificate(t *testing.T) {
 	if e.Height != 1 || len(env.commits) != 0 {
 		t.Fatal("a rejected sync block was committed")
 	}
+	short := certFor(a, 1, 2, 3, 4, 5, 6)
+	if e.AcceptSyncedHeader(6, &hdr, &short) == nil || !env.logged("REJECT h=1 r=0 type SYNC from 06 reason cert_no_quorum") {
+		t.Fatal("a header without a real certificate was accepted")
+	}
 	cert := certFor(a, 1, 2, 3, 4, 5, 6, 7)
 	if err := e.CommitSynced(5, &good, &cert); err != nil {
 		t.Fatal(err)
@@ -101,7 +121,7 @@ func TestCommitSyncedTrustsOnlyTheCertificate(t *testing.T) {
 func TestWhenToRequestSync(t *testing.T) {
 	e, env, _ := readyEngine(t) // height 1, prevoted
 	next := signedVote(5, types.Prevote, 2, 0, blockB)
-	e.OnVote(5, &next)
+	e.OnVote(3, &next) // relayed by 3, signed by 5: ask the signer
 	if len(env.syncs) != 0 {
 		t.Fatal("a message from h+1 alone must not trigger sync")
 	}

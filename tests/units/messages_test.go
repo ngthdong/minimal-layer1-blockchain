@@ -28,8 +28,8 @@ func sampleMessages() []types.Message {
 		&types.BodyResponse{Height: 7, BlockHash: h.Hash(), Txs: []types.Tx{tx}},
 		&types.SyncRequest{FromHeight: 3},
 		&types.SyncResponse{
-			Block: types.Block{Header: h, Txs: []types.Tx{tx}},
-			Cert:  types.CommitCert{Height: 7, BlockHash: h.Hash(), Precommits: []types.Vote{v}},
+			Header: h,
+			Cert:   types.CommitCert{Height: 7, BlockHash: h.Hash(), Precommits: []types.Vote{v}},
 		},
 	}
 }
@@ -81,8 +81,7 @@ func TestCloneIsDeepAndKeepsID(t *testing.T) {
 		case *types.BodyResponse:
 			x.Txs[0].Value[0]++
 		case *types.SyncResponse:
-			x.Block.Header.Sig[0]++
-			x.Block.Txs[0].Sig[0]++
+			x.Header.Sig[0]++
 			x.Cert.Precommits[0].Sig[0]++
 		default:
 			continue // no slices inside
@@ -122,5 +121,24 @@ func TestMsgHeight(t *testing.T) {
 		if m.MsgHeight() != want[i] {
 			t.Fatalf("%s: MsgHeight = %d, want %d", m.Kind(), m.MsgHeight(), want[i])
 		}
+	}
+}
+
+// The POL is part of the proposal message: cloned deeply and covered by the
+// ID, so a copy stripped of its POL (or with another one) never shadows it.
+func TestProposalPOLInIDAndClone(t *testing.T) {
+	v := sampleVote()
+	v.Sig = []byte{7, 8, 9}
+	m := &types.ProposalMsg{Proposal: types.Proposal{Height: 7, Round: 1, POLRound: 0, Sig: []byte{1},
+		POL: []types.Vote{v}}}
+	before := m.ID()
+	c := m.Clone().(*types.ProposalMsg)
+	c.Proposal.POL[0].Sig[0]++
+	if m.ID() != before || c.ID() == before {
+		t.Fatal("POL not deep-cloned or not covered by the ID")
+	}
+	c.Proposal.POL = nil
+	if c.ID() == before {
+		t.Fatal("a proposal without its POL has the same ID")
 	}
 }

@@ -61,6 +61,26 @@ func TestSignerAllowsOtherSteps(t *testing.T) {
 	if _, ok := s.Signed(types.Prevote, 5, 1); ok {
 		t.Fatal("Prune kept a vote below the height")
 	}
+	// The forgotten height can never be signed again, with any block.
+	if _, err := s.Sign(types.Prevote, 5, 1, blockA); !errors.Is(err, consensus.ErrStaleHeight) {
+		t.Fatalf("vote below the floor: %v, want stale_height", err)
+	}
+	p := types.Proposal{Height: 5, Round: 2, POLRound: -1, Header: types.BlockHeader{Height: 5}}
+	if err := s.SignProposal(&p); !errors.Is(err, consensus.ErrStaleHeight) {
+		t.Fatalf("proposal below the floor: %v, want stale_height", err)
+	}
+}
+
+// Rule 6: no vote of a wrong phase or round. (Chain and domain cannot be
+// wrong: the signer holds its chain id and always signs under "VOTE:".)
+func TestSignerRefusesWrongPhaseOrRound(t *testing.T) {
+	s := consensus.NewVoteSigner(3, vPrivs[3], chain)
+	if _, err := s.Sign(types.VoteType(7), 5, 0, blockA); !errors.Is(err, consensus.ErrBadVoteType) {
+		t.Fatalf("phase 7: %v, want bad_vote_type", err)
+	}
+	if _, err := s.Sign(types.Prevote, 5, -1, blockA); !errors.Is(err, consensus.ErrBadRound) {
+		t.Fatalf("round -1: %v, want bad_round", err)
+	}
 }
 
 // Proposals get the same guard: one per (height, round).

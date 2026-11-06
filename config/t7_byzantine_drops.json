@@ -31,6 +31,6 @@
   "byzantine": [
     { "node": 2, "behavior": "equivocate", "from_ms": 0 },
     { "node": 5, "behavior": "equivocate", "from_ms": 0 },
-    { "node": 8, "behavior": "invalid_proposal", "from_ms": 0 }
+    { "node": 8, "behavior": "equivocate", "from_ms": 0 }
   ]
 }

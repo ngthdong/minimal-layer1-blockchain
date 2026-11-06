@@ -26,8 +26,17 @@ func (e *Engine) noticeAhead(from types.NodeID, h uint64) {
 // the decision), or (b) we hold 2f+1 precommits for a block whose body
 // never reached us. A body or decision merely late is not lagging: only a
 // stuck round (rebroadcast timer) asks.
+//
+// In (a) we ask the validator that SIGNED the latest buffered vote of h+1
+// (votes are verified before buffering): it works on h+1, so it finalized h.
+// The peer that relayed the vote may be stuck at h just like us.
 func (e *Engine) lagging() (types.NodeID, bool) {
 	if next := e.future[e.Height+1]; len(next) > 0 {
+		for i := len(next) - 1; i >= 0; i-- {
+			if v := next[i].vote; v != nil {
+				return v.Validator, true
+			}
+		}
 		return next[len(next)-1].from, true
 	}
 	for _, r := range e.Votes.Rounds(e.Height, types.Precommit) {
@@ -39,18 +48,30 @@ func (e *Engine) lagging() (types.NodeID, bool) {
 	return 0, false
 }
 
-// CommitSynced finalizes block b of our current height, received through
-// block sync from peer `from`. Nothing about the sender is trusted:
+// AcceptSyncedHeader checks a finalized header received through block sync
+// from peer `from`, BEFORE its body is requested. Nothing about the sender
+// is trusted:
 //
-//  1. block and certificate are for our current height  → wrong_height
-//  2. the certificate is for exactly this block          → sync_cert_mismatch
-//  3. the block extends our chain                        → wrong_chain / bad_parent
+//  1. header and certificate are for our current height → wrong_height
+//  2. the certificate is for exactly this header         → sync_cert_mismatch
+//  3. the header extends our chain                       → wrong_chain / bad_parent
 //  4. 2f+1 valid precommits from distinct validators     → cert_* (VerifyCommitCert)
-//  5. the body executes to the header's StateHash        → bad_tx_root, bad_state_hash, ...
+func (e *Engine) AcceptSyncedHeader(from types.NodeID, hdr *types.BlockHeader, cert *types.CommitCert) error {
+	err := e.checkSynced(hdr, cert)
+	if err != nil {
+		e.reject("SYNC", hdr.Height, cert.Round, from, err)
+	}
+	return err
+}
+
+// CommitSynced finalizes block b of our current height once its body came:
+// checks 1-4 again, then
+//
+//  5. the body executes to the header's StateHash → bad_tx_root, bad_state_hash, ...
 //
 // Then it is committed exactly as if we had collected the precommits.
 func (e *Engine) CommitSynced(from types.NodeID, b *types.Block, cert *types.CommitCert) error {
-	err := e.checkSynced(b, cert)
+	err := e.checkSynced(&b.Header, cert)
 	var post *state.State
 	if err == nil {
 		post, err = e.env.ExecuteBody(&b.Header, b.Txs, e.cfg.MaxBlockTxs)
@@ -63,15 +84,15 @@ func (e *Engine) CommitSynced(from types.NodeID, b *types.Block, cert *types.Com
 	return nil
 }
 
-func (e *Engine) checkSynced(b *types.Block, cert *types.CommitCert) error {
+func (e *Engine) checkSynced(hdr *types.BlockHeader, cert *types.CommitCert) error {
 	switch {
-	case b.Header.Height != e.Height || cert.Height != e.Height:
+	case hdr.Height != e.Height || cert.Height != e.Height:
 		return ErrWrongHeight
-	case cert.BlockHash != b.Hash():
+	case cert.BlockHash != hdr.Hash():
 		return ErrSyncCertMismatch
-	case b.Header.ChainID != e.chainID:
+	case hdr.ChainID != e.chainID:
 		return ErrWrongChain
-	case b.Header.ParentHash != e.env.LastHash():
+	case hdr.ParentHash != e.env.LastHash():
 		return ErrBadParent
 	}
 	return VerifyCommitCert(e.chainID, e.vals, cert)

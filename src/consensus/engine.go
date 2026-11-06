@@ -49,7 +49,8 @@ type Env interface {
 	// ScheduleTimeout calls engine.OnTimeout(t) after afterMs of virtual time.
 	ScheduleTimeout(afterMs uint64, t Timeout)
 	// RequestSync asks peer for the finalized blocks we are missing; the
-	// node answers with CommitSynced for each block that arrives.
+	// node calls AcceptSyncedHeader for each header that arrives, then
+	// CommitSynced once its body came.
 	RequestSync(peer types.NodeID)
 }
 
@@ -82,6 +83,7 @@ type Engine struct {
 	Votes *VoteSet // votes of the current height
 
 	proposals map[int32]types.Proposal         // accepted proposal per round
+	pols      map[int32][]types.Vote           // verified POL (2f+1 prevotes) per round
 	headers   map[types.Hash]types.BlockHeader // accepted headers, waiting for or with a body
 	bodies    map[types.Hash]*pending          // blocks whose body executed correctly
 	invalid   map[types.Hash]bool              // blocks whose body is provably wrong
@@ -103,6 +105,7 @@ func (e *Engine) StartHeight(h uint64) {
 	e.LockedRound, e.LockedHash = -1, types.ZeroHash
 	e.ValidRound, e.ValidHash = -1, types.ZeroHash
 	e.proposals = make(map[int32]types.Proposal)
+	e.pols = make(map[int32][]types.Vote)
 	e.headers = make(map[types.Hash]types.BlockHeader)
 	e.bodies = make(map[types.Hash]*pending)
 	e.invalid = make(map[types.Hash]bool)
@@ -135,6 +138,7 @@ func (e *Engine) propose() {
 	p := types.Proposal{Height: e.Height, Round: e.Round, POLRound: -1}
 	if e.ValidRound >= 0 && e.bodies[e.ValidHash] != nil {
 		p.POLRound, p.Header = e.ValidRound, e.headers[e.ValidHash] // builder's signature kept
+		p.POL = e.polFor(e.ValidRound, e.ValidHash)
 	} else {
 		block, post := e.env.BuildBlock(e.Height, e.env.LastHash(), e.cfg.MaxBlockTxs)
 		e.signer.SignHeader(&block.Header)
@@ -174,7 +178,10 @@ func (e *Engine) OnProposal(from types.NodeID, p *types.Proposal) {
 		return
 	}
 	bh := p.BlockHash()
-	e.proposals[p.Round] = *p
+	e.proposals[p.Round] = p.Clone()
+	if len(p.POL) > 0 { // verified above: 2f+1 prevotes for bh in POLRound
+		e.pols[p.POLRound] = p.Clone().POL
+	}
 	e.env.Log(logging.EvHeaderAccept, p.Height, p.Round, "block", bh.Short(), "from", node(from))
 	if _, known := e.headers[bh]; !known {
 		e.headers[bh] = p.Header

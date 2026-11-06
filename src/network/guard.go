@@ -48,13 +48,15 @@ func (n *Network) admit(env types.Envelope) bool {
 	if g.count <= pb.MaxMsgs {
 		return true
 	}
+	// BLOCK and UNBLOCK carry the type and height of the message that
+	// crossed the threshold, like every other network event.
 	g.blocked, g.dropped = true, 1
-	n.log.Log(int(env.To), logging.EvBlock, 0, 0, "peer", node(env.From),
+	n.logEvent(int(env.To), logging.EvBlock, env, "peer", node(env.From),
 		"msgs", strconv.Itoa(g.count), "window_ms", strconv.FormatUint(pb.WindowMs, 10),
 		"until", strconv.FormatUint(now+pb.BlockMs, 10))
 	n.logEvent(int(env.To), logging.EvDrop, env, "from", node(env.From), "reason", "blocked")
 	n.clock.At(now+pb.BlockMs, func() {
-		n.log.Log(int(env.To), logging.EvUnblock, 0, 0, "peer", node(env.From), "dropped", strconv.Itoa(g.dropped))
+		n.logEvent(int(env.To), logging.EvUnblock, env, "peer", node(env.From), "dropped", strconv.Itoa(g.dropped))
 		g.blocked, g.count, g.window = false, 0, n.clock.Now()/pb.WindowMs
 	})
 	return false

@@ -12,6 +12,11 @@ type Proposal struct {
 	Header   BlockHeader
 	Proposer NodeID
 	Sig      []byte // under "PROPOSAL:<chain_id>"
+
+	// POL (proof of lock): when POLRound >= 0, the 2f+1 signed prevotes for
+	// this block in round POLRound, so that every receiver can observe the
+	// quorum itself (rule 5). Not covered by Sig: each vote carries its own.
+	POL []Vote
 }
 
 func (p *Proposal) BlockHash() Hash { return p.Header.Hash() }

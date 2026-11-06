@@ -19,6 +19,7 @@ var (
 	ErrWrongChain       = errors.New("wrong_chain")
 	ErrWrongHeight      = errors.New("wrong_height")
 	ErrBadParent        = errors.New("bad_parent")
+	ErrBadPOL           = errors.New("bad_pol")
 )
 
 // VerifyVote checks that v is well formed and really signed by the validator
@@ -73,6 +74,34 @@ func VerifyProposal(chainID string, vs *ValidatorSet, parent types.Hash, p *type
 	}
 	if h.ParentHash != parent {
 		return ErrBadParent
+	}
+	if len(p.POL) > 0 {
+		return VerifyPOL(chainID, vs, p)
+	}
+	return nil
+}
+
+// VerifyPOL checks the proof of lock of a re-proposal: prevotes for the
+// proposed block at (Height, POLRound), each validly signed, from 2f+1
+// DISTINCT validators (rule 7: one vote per validator is counted). A
+// proposal without POL is accepted too; the node then waits until its own
+// vote set holds the quorum.
+func VerifyPOL(chainID string, vs *ValidatorSet, p *types.Proposal) error {
+	if p.POLRound < 0 {
+		return ErrBadPOL
+	}
+	bh := p.BlockHash()
+	seen := make(map[types.NodeID]bool, len(p.POL))
+	for i := range p.POL {
+		v := &p.POL[i]
+		if v.Type != types.Prevote || v.Height != p.Height || v.Round != p.POLRound ||
+			v.BlockHash != bh || seen[v.Validator] || VerifyVote(chainID, vs, v) != nil {
+			return ErrBadPOL
+		}
+		seen[v.Validator] = true
+	}
+	if len(seen) < vs.Quorum() {
+		return ErrBadPOL
 	}
 	return nil
 }

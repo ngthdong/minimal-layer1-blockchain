@@ -10,7 +10,7 @@ import (
 // block, and sends that one to the upper half of the validators (NodeID >=
 // n/2); the lower half gets the real vote. Honest nodes relay the first
 // copy they see of each, so in the end every node holds both signed votes:
-// the evidence it logs as EQUIVOCATION, each vote counting once toward its own block (rule 7).
+// the evidence it logs as EQUIVOCATION, counting only the first (rule 7).
 //
 // Everything else — proposals, bodies, other validators' votes it relays —
 // goes out unchanged: the attack is the double vote alone.

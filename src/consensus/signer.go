@@ -12,6 +12,10 @@ import (
 // do that: two conflicting signed messages for one step are equivocation.
 var ErrDoubleSign = errors.New("double_sign_refused")
 
+// ErrStaleHeight: a height below the signer's floor (Prune), whose votes are
+// forgotten: signing there could repeat a step with another block.
+var ErrStaleHeight = errors.New("stale_height")
+
 // VoteSigner is the only holder of a validator's private key for votes.
 // It enforces rules 1, 2 and 6 of the lab in ONE place, whatever the engine
 // logic above it does:
@@ -19,7 +23,10 @@ var ErrDoubleSign = errors.New("double_sign_refused")
 //   - at most one vote per (height, round, type);
 //   - asking again for the SAME vote returns the stored one (used to re-send
 //     votes after a timeout);
-//   - asking for a different vote in a step already signed is refused.
+//   - asking for a different vote in a step already signed is refused;
+//   - a vote of another phase (not PREVOTE/PRECOMMIT), a negative round, or
+//     a height below the floor set by Prune is refused; the chain id and the
+//     "VOTE:" domain are fixed by the signer itself.
 //
 // It also signs headers and proposals, with the same guard: at most one
 // proposal per (height, round).
@@ -29,6 +36,7 @@ type VoteSigner struct {
 	chainID   string
 	signed    map[VoteKey]types.Vote
 	proposals map[VoteKey]types.Hash // Type unused (0): key = (height, round)
+	floor     uint64                 // lowest height still signable (Prune)
 }
 
 func NewVoteSigner(id types.NodeID, priv crypto.PrivateKey, chainID string) *VoteSigner {
@@ -46,6 +54,12 @@ func (s *VoteSigner) SignHeader(h *types.BlockHeader) {
 // "PROPOSAL:<chain_id>". A second proposal for another block in the same
 // (height, round) is refused.
 func (s *VoteSigner) SignProposal(p *types.Proposal) error {
+	if p.Height < s.floor {
+		return ErrStaleHeight
+	}
+	if p.Round < 0 {
+		return ErrBadRound
+	}
 	key := VoteKey{Height: p.Height, Round: p.Round}
 	if prev, ok := s.proposals[key]; ok && prev != p.BlockHash() {
 		return ErrDoubleSign
@@ -59,6 +73,14 @@ func (s *VoteSigner) SignProposal(p *types.Proposal) error {
 // Sign returns this validator's vote for (h, r, typ) on hash (ZeroHash = NIL),
 // signed under "VOTE:<chain_id>".
 func (s *VoteSigner) Sign(typ types.VoteType, h uint64, r int32, hash types.Hash) (types.Vote, error) {
+	switch {
+	case typ != types.Prevote && typ != types.Precommit:
+		return types.Vote{}, ErrBadVoteType
+	case r < 0:
+		return types.Vote{}, ErrBadRound
+	case h < s.floor:
+		return types.Vote{}, ErrStaleHeight
+	}
 	key := VoteKey{Height: h, Round: r, Type: typ}
 	if prev, ok := s.signed[key]; ok {
 		if prev.BlockHash != hash {
@@ -78,8 +100,12 @@ func (s *VoteSigner) Signed(typ types.VoteType, h uint64, r int32) (types.Vote, 
 	return v.Clone(), ok
 }
 
-// Prune forgets votes below height h (they can never be needed again).
+// Prune forgets votes below height h (they can never be needed again) and
+// raises the floor: nothing below h will ever be signed again.
 func (s *VoteSigner) Prune(h uint64) {
+	if h > s.floor {
+		s.floor = h
+	}
 	for k := range s.signed {
 		if k.Height < h {
 			delete(s.signed, k)
