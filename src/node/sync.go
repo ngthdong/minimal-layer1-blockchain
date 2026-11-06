@@ -23,7 +23,25 @@ func (n *Node) RequestSync(peer types.NodeID) {
 		return
 	}
 	n.syncAsked, n.syncAt = true, now
-	n.net.Send(n.ID, peer, &types.SyncRequest{FromHeight: n.Ledger.Height() + 1})
+	req := &types.SyncRequest{FromHeight: n.Ledger.Height() + 1}
+	if n.isPeer(peer) {
+		n.net.Send(n.ID, peer, req)
+		return
+	}
+	// Not a neighbour (a validator whose precommits were relayed to us):
+	// the neighbours that relayed them have most likely finalized too.
+	for _, p := range n.net.Peers(n.ID) {
+		n.net.Send(n.ID, p, req)
+	}
+}
+
+func (n *Node) isPeer(id types.NodeID) bool {
+	for _, p := range n.net.Peers(n.ID) {
+		if p == id {
+			return true
+		}
+	}
+	return false
 }
 
 // onSyncRequest answers with up to maxSyncBlocks finalized blocks, each with

@@ -1,11 +1,16 @@
 package unit
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/ngthdong/minimal-layer1-blockchain/logging"
 	"github.com/ngthdong/minimal-layer1-blockchain/network"
+	"github.com/ngthdong/minimal-layer1-blockchain/node"
+	"github.com/ngthdong/minimal-layer1-blockchain/sim"
+	"github.com/ngthdong/minimal-layer1-blockchain/simconfig"
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
@@ -71,6 +76,29 @@ func TestTopologyMustSurviveTheFaultyNodes(t *testing.T) {
 	writeFile(t, path, "0 1\n2 3\n")
 	if _, err := network.LoadTopology(path, 4, nil); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatalf("disconnected graph accepted: %v", err)
+	}
+}
+
+// Block sync asked from a validator that is not a neighbour goes to the
+// neighbours instead: on the line 0-1-2, node 0 can only ask node 1.
+func TestSyncRequestToANonNeighbourGoesToNeighbours(t *testing.T) {
+	sched := sim.NewScheduler()
+	var buf bytes.Buffer
+	log := logging.New(&buf, sched.Now)
+	net := network.New(simconfig.NetworkConfig{MinDelayMs: 10, DeltaMs: 10}, sched, sim.NewRNG(1, "network"), log)
+	adj, _ := network.ParseTopology(strings.NewReader("0 1\n1 2\n"), 3)
+	var nodes []*node.Node
+	for id := types.NodeID(0); id < 3; id++ {
+		nd := node.New(id, chain, registry(), net, log, sched)
+		net.SetPeers(id, adj[id])
+		net.Register(id, nd.HandleMessage)
+		nodes = append(nodes, nd)
+	}
+	nodes[0].RequestSync(2)
+	_ = log.Flush()
+	if out := buf.String(); !strings.Contains(out, "type=SYNC_REQ") || !strings.Contains(out, "to=01") ||
+		strings.Contains(out, "no_link") {
+		t.Fatalf("log:\n%s", out)
 	}
 }
 
