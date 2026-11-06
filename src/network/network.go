@@ -42,6 +42,7 @@ type Network struct {
 	links    map[linkKey]*link               // rate limiter state per (from, to)
 	guards   map[linkKey]*guard              // peer guard of `to` for messages from `from`
 	peers    map[types.NodeID][]types.NodeID // sorted
+	linked   map[linkKey]bool                // (from, to) is an edge of the topology
 }
 
 func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger) *Network {
@@ -53,6 +54,7 @@ func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger
 		links:    make(map[linkKey]*link),
 		guards:   make(map[linkKey]*guard),
 		peers:    make(map[types.NodeID][]types.NodeID),
+		linked:   make(map[linkKey]bool),
 	}
 }
 
@@ -64,6 +66,9 @@ func (n *Network) SetPeers(id types.NodeID, peers []types.NodeID) {
 	p := append([]types.NodeID(nil), peers...)
 	sort.Slice(p, func(i, j int) bool { return p[i] < p[j] })
 	n.peers[id] = p
+	for _, to := range p {
+		n.linked[linkKey{id, to}] = true
+	}
 }
 
 func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
@@ -72,9 +77,14 @@ func (n *Network) Peers(id types.NodeID) []types.NodeID { return n.peers[id] }
 // message the node's honest code sends passes through it first.
 func (n *Network) SetOutbound(id types.NodeID, f Outbound) { n.outbound[id] = f }
 
-// Send transmits msg from one node to another, through the sender's
-// Outbound hook if it has one.
+// Send transmits msg from one node to a NEIGHBOUR (any other is dropped,
+// reason=no_link), through the sender's Outbound hook if it has one.
 func (n *Network) Send(from, to types.NodeID, msg types.Message) {
+	if !n.linked[linkKey{from, to}] { // only neighbours can talk (topology)
+		n.logEvent(int(from), logging.EvDrop, types.Envelope{From: from, To: to, Msg: msg},
+			"to", node(to), "reason", "no_link")
+		return
+	}
 	f := n.outbound[from]
 	if f == nil {
 		n.send(from, to, msg)

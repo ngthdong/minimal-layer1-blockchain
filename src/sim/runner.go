@@ -58,10 +58,17 @@ func Run(cfg *simconfig.Config, logOut io.Writer) (*Result, error) {
 	}
 
 	byz := make(map[int]bool, len(cfg.Byzantine))
+	var faulty []types.NodeID
 	for _, b := range cfg.Byzantine {
 		byz[b.Node] = true
+		faulty = append(faulty, types.NodeID(b.Node))
 	}
 	mesh := network.FullMesh(cfg.NumValidators)
+	if cfg.Network.Topology == "file" {
+		if mesh, err = network.LoadTopology(cfg.Network.TopologyFile, cfg.NumValidators, faulty); err != nil {
+			return nil, err
+		}
+	}
 	for i := 0; i < cfg.NumValidators; i++ {
 		id := types.NodeID(i)
 		nd := node.New(id, cfg.ChainID, reg, net, log, sched)

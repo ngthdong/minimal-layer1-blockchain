@@ -111,7 +111,7 @@ func TestNetworkLogIsCompleteAndDeterministic(t *testing.T) {
 			net.Register(id, func(types.Envelope) {})
 		}
 		net.Broadcast(1, voteMsg(1, 3))
-		net.Send(1, 9, voteMsg(1, 3)) // node 9 does not exist
+		net.Send(1, 9, voteMsg(1, 3)) // node 9 does not exist: no link to it
 		sched.Run(1000, nil)
 		if err := log.Flush(); err != nil { // the logger is buffered
 			t.Fatal(err)
@@ -122,8 +122,8 @@ func TestNetworkLogIsCompleteAndDeterministic(t *testing.T) {
 	if a != b {
 		t.Fatal("same seed gave a different network log")
 	}
-	if strings.Count(a, "ev=SEND") != 4 || strings.Count(a, "ev=RECV") != 3 ||
-		!strings.Contains(a, "ev=DROP          h=5 r=3 type=VOTE") || !strings.Contains(a, "reason=unknown_peer") {
+	if strings.Count(a, "ev=SEND") != 3 || strings.Count(a, "ev=RECV") != 3 ||
+		!strings.Contains(a, "ev=DROP          h=5 r=3 type=VOTE") || !strings.Contains(a, "to=09 reason=no_link") {
 		t.Fatalf("unexpected log:\n%s", a)
 	}
 }
