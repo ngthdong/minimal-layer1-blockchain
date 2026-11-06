@@ -46,9 +46,9 @@ type RateLimit struct {
 }
 
 type PeerBlock struct {
-	WindowMs uint64 `json:"window_ms"`
-	MaxMsgs  int    `json:"max_msgs"`
-	BlockMs  uint64 `json:"block_ms"`
+	WindowMs uint64 `json:"window_ms"` // counting window
+	MaxMsgs  int    `json:"max_msgs"`  // more from one peer in one window → BLOCK (0 = off)
+	BlockMs  uint64 `json:"block_ms"`  // how long the peer stays blocked
 }
 
 type ConsensusConfig struct {
@@ -129,6 +129,8 @@ func (c *Config) Validate() error {
 	case nw.RateLimit.Capacity < 0 || nw.RateLimit.QueueLimit < 0 ||
 		(nw.RateLimit.Capacity > 0 && nw.RateLimit.RefillPerMs <= 0):
 		return fmt.Errorf("rate_limit: capacity and queue_limit must be >= 0, refill_per_ms > 0 (capacity 0 = no limit)")
+	case nw.PeerBlock.MaxMsgs < 0 || (nw.PeerBlock.MaxMsgs > 0 && (nw.PeerBlock.WindowMs == 0 || nw.PeerBlock.BlockMs == 0)):
+		return fmt.Errorf("peer_block: max_msgs > 0 needs window_ms and block_ms > 0 (max_msgs 0 = no blocking)")
 	case cs.TimeoutProposeMs == 0 || cs.TimeoutPrevoteMs == 0 || cs.TimeoutPrecommitMs == 0:
 		return fmt.Errorf("consensus timeouts must be > 0")
 	case cs.MaxBlockTxs <= 0:

@@ -12,13 +12,13 @@ import (
 	"github.com/ngthdong/minimal-layer1-blockchain/types"
 )
 
-// limitedNet is testNet with a fixed 10 ms delay (arrival order = send
-// order) and the given rate limit; it also returns the log.
-func limitedNet(rl simconfig.RateLimit) (*sim.Scheduler, *network.Network, *[]arrival, func() string) {
+// fixedNet is testNet (3 nodes) with a fixed 10 ms delay, so arrival order
+// is send order; it also returns the log.
+func fixedNet(cfg simconfig.NetworkConfig) (*sim.Scheduler, *network.Network, *[]arrival, func() string) {
 	sched := sim.NewScheduler()
 	var buf bytes.Buffer
 	log := logging.New(&buf, sched.Now)
-	cfg := simconfig.NetworkConfig{MinDelayMs: 10, DeltaMs: 10, RateLimit: rl}
+	cfg.MinDelayMs, cfg.DeltaMs = 10, 10
 	net := network.New(cfg, sched, sim.NewRNG(1, "network"), log)
 	got := &[]arrival{}
 	for id, peers := range network.FullMesh(3) {
@@ -26,6 +26,10 @@ func limitedNet(rl simconfig.RateLimit) (*sim.Scheduler, *network.Network, *[]ar
 		net.Register(id, func(env types.Envelope) { *got = append(*got, arrival{sched.Now(), env}) })
 	}
 	return sched, net, got, func() string { _ = log.Flush(); return buf.String() }
+}
+
+func limitedNet(rl simconfig.RateLimit) (*sim.Scheduler, *network.Network, *[]arrival, func() string) {
+	return fixedNet(simconfig.NetworkConfig{RateLimit: rl})
 }
 
 // 10 messages at once on a link with 3 tokens, 1 token/ms, queue of 5:

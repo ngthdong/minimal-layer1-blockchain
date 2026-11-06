@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,6 +59,7 @@ func Run(t *testing.T, cfg *simconfig.Config, logName string) (*sim.Result, []by
 	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	assertOnlyByzantineBlocked(t, cfg, buf.Bytes())
 	return res, buf.Bytes()
 }
 
@@ -81,6 +83,26 @@ func AssertProgress(t *testing.T, res *sim.Result, h uint64) {
 	for _, id := range res.Honest {
 		if got := res.Nodes[id].Ledger.Height(); got < h {
 			t.Fatalf("node %d finalized height %d, want >= %d", id, got, h)
+		}
+	}
+}
+
+// assertOnlyByzantineBlocked is checked on EVERY run: a peer guard may block
+// a Byzantine node, never an honest one (that would cut it out of the
+// quorums and could stall the chain).
+func assertOnlyByzantineBlocked(t *testing.T, cfg *simconfig.Config, log []byte) {
+	t.Helper()
+	byz := map[string]bool{}
+	for _, b := range cfg.Byzantine {
+		byz[fmt.Sprintf("peer=%02d", b.Node)] = true
+	}
+	for _, line := range bytes.Split(log, []byte("\n")) {
+		if !bytes.Contains(line, []byte(" ev=BLOCK ")) {
+			continue
+		}
+		i := bytes.Index(line, []byte("peer="))
+		if i < 0 || !byz[string(line[i:i+7])] {
+			t.Fatalf("an honest peer was blocked: %s", line)
 		}
 	}
 }

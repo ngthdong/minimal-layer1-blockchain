@@ -53,6 +53,8 @@ func New(name string, self Identity) (Behavior, error) {
 		return Equivocate{Self: self}, nil
 	case "invalid_proposal":
 		return &InvalidProposal{}, nil
+	case "spam":
+		return Spam{}, nil
 	}
 	return nil, fmt.Errorf("byzantine behavior %q is not implemented", name)
 }

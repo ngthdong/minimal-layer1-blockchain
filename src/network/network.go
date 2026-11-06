@@ -40,6 +40,7 @@ type Network struct {
 	down     map[types.NodeID]bool           // crashed nodes: deliveries to them vanish
 	outbound map[types.NodeID]Outbound       // send hooks of Byzantine nodes
 	links    map[linkKey]*link               // rate limiter state per (from, to)
+	guards   map[linkKey]*guard              // peer guard of `to` for messages from `from`
 	peers    map[types.NodeID][]types.NodeID // sorted
 }
 
@@ -50,6 +51,7 @@ func New(cfg simconfig.NetworkConfig, clock Clock, rng Rand, log *logging.Logger
 		down:     make(map[types.NodeID]bool),
 		outbound: make(map[types.NodeID]Outbound),
 		links:    make(map[linkKey]*link),
+		guards:   make(map[linkKey]*guard),
 		peers:    make(map[types.NodeID][]types.NodeID),
 	}
 }
@@ -139,7 +141,7 @@ func (n *Network) Broadcast(from types.NodeID, msg types.Message) {
 func (n *Network) Down(id types.NodeID) { n.down[id] = true }
 
 func (n *Network) deliver(env types.Envelope) {
-	if n.down[env.To] {
+	if n.down[env.To] || !n.admit(env) {
 		return
 	}
 	h, ok := n.handlers[env.To]

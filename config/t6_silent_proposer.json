@@ -11,7 +11,7 @@
     "min_delay_ms": 10,
     "pre_gst": { "drop_prob": 0.0, "dup_prob": 0.0, "max_delay_ms": 200 },
     "rate_limit": { "capacity": 500, "refill_per_ms": 5, "queue_limit": 2000 },
-    "peer_block": { "window_ms": 1000, "max_msgs": 5000, "block_ms": 3000 },
+    "peer_block": { "window_ms": 1000, "max_msgs": 500, "block_ms": 3000 },
     "topology": "full",
     "topology_file": ""
   },

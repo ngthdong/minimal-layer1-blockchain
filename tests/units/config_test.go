@@ -50,6 +50,7 @@ func TestValidateRejectsBadConfigs(t *testing.T) {
 		"slash in account": func(c *simconfig.Config) { c.Workload.Accounts = []string{"Al/ice"} },
 		"bad topology":     func(c *simconfig.Config) { c.Network.Topology = "ring" },
 		"no refill":        func(c *simconfig.Config) { c.Network.RateLimit.RefillPerMs = 0 },
+		"no block window":  func(c *simconfig.Config) { c.Network.PeerBlock.WindowMs = 0 },
 		"unknown inject": func(c *simconfig.Config) {
 			c.Workload.Inject = []simconfig.InjectTx{{Kind: "teleport", Account: "Alice"}}
 		},
